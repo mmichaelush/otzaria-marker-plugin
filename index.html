@@ -1,0 +1,270 @@
+<!doctype html>
+<html dir="rtl" lang="he">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>מרקר</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <button id="refreshBtn" class="icon-btn header-refresh" type="button" title="רענן" aria-label="רענן">↻</button>
+      <div class="brand">
+        <span class="brand-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M4 16.7 15.9 4.8a2.1 2.1 0 0 1 3 0l.3.3a2.1 2.1 0 0 1 0 3L7.3 20H4v-3.3Z" fill="currentColor"/>
+            <path d="M13.8 6.9 17.1 10.2" stroke="var(--color-on-primary)" stroke-width="1.7" stroke-linecap="round"/>
+            <path d="M4 21h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".55"/>
+          </svg>
+        </span>
+        <h1>מרקר</h1>
+        <p>סימון שורות וניהול הדגשות באוצריא</p>
+      </div>
+      <span class="header-spacer" aria-hidden="true"></span>
+    </header>
+
+    <nav class="tabs" aria-label="לשוניות">
+      <button class="tab active" type="button" data-tab="highlights">הדגשות</button>
+      <button class="tab" type="button" data-tab="colors">ניהול צבעים</button>
+      <button class="tab" type="button" data-tab="settings">הגדרות</button>
+    </nav>
+
+    <section id="highlightsTab" class="tab-panel active" data-panel="highlights">
+      <div class="panel-toolbar">
+        <div class="highlights-toolbar-heading">
+          <div><h2>רשימת ההדגשות</h2><p>חיפוש, סינון וארגון ההדגשות</p></div>
+        </div>
+        <div class="filters">
+          <label class="search-filter">חיפוש
+            <input id="highlightSearch" type="search" placeholder="חפש בתוכן, בספר או במראה מקום" autocomplete="off" aria-keyshortcuts="Control+F Meta+F" />
+          </label>
+          <label>ספר
+            <select id="bookFilter"></select>
+          </label>
+          <label>צבע
+            <select id="colorFilter"></select>
+          </label>
+          <label>תגית
+            <select id="tagFilter"></select>
+          </label>
+          <label>מצב
+            <select id="statusFilter">
+              <option value="all">כל ההדגשות</option>
+              <option value="favorites">מועדפות בלבד</option>
+              <option value="stale">דורשות תיקון</option>
+            </select>
+          </label>
+          <label>מיון
+            <select id="sortHighlights">
+              <option value="newest">החדשות תחילה</option>
+              <option value="oldest">הישנות תחילה</option>
+              <option value="book">לפי ספר</option>
+              <option value="location">לפי מיקום בספר</option>
+              <option value="color">לפי צבע</option>
+              <option value="favorites">מועדפות תחילה</option>
+            </select>
+          </label>
+          <label>קיבוץ
+            <select id="groupHighlights">
+              <option value="none">ללא קיבוץ</option>
+              <option value="book">לפי ספר</option>
+              <option value="color">לפי צבע</option>
+              <option value="tag">לפי תגית</option>
+              <option value="date">לפי תאריך</option>
+            </select>
+          </label>
+        </div>
+        <div class="toolbar-actions">
+          <span id="resultsCount" class="results-count" aria-live="polite"></span>
+          <button id="selectVisibleBtn" class="secondary-btn" type="button" aria-keyshortcuts="Control+A Meta+A" title="בחר את תוצאות הסינון (Ctrl+A)">בחר מוצגות</button>
+          <button id="selectAllBtn" class="secondary-btn" type="button">בחר הכול</button>
+          <button id="resetFiltersBtn" class="secondary-btn" type="button">איפוס סינון</button>
+          <button id="clearAllBtn" class="danger-btn" type="button">נקה הכל</button>
+        </div>
+      </div>
+      <div id="bulkActions" class="bulk-actions" hidden>
+        <strong id="selectedCount"></strong>
+        <label>שינוי צבע
+          <select id="bulkColor"></select>
+        </label>
+        <button id="applyBulkColorBtn" class="secondary-btn" type="button">החל צבע</button>
+        <label>הוספת תגיות
+          <input id="bulkTags" type="text" maxlength="500" placeholder="אמונה, לעיון" />
+        </label>
+        <button id="applyBulkTagsBtn" class="secondary-btn" type="button">הוסף תגיות</button>
+        <button id="exportSelectedBtn" class="secondary-btn" type="button">ייצוא נבחרים</button>
+        <button id="deleteSelectedBtn" class="danger-btn" type="button" aria-keyshortcuts="Delete">מחק נבחרים</button>
+        <button id="clearSelectionBtn" class="icon-btn" type="button">בטל בחירה</button>
+      </div>
+      <div id="undoDeleteBar" class="undo-bar" hidden>
+        <span id="undoDeleteText"></span>
+        <button id="undoDeleteBtn" class="secondary-btn" type="button">ביטול מחיקה</button>
+        <button id="dismissUndoBtn" class="icon-btn" type="button" aria-label="סגור">×</button>
+      </div>
+      <div id="highlightsList" class="highlights-list" aria-live="polite"></div>
+      <div class="load-more-row">
+        <button id="loadMoreBtn" class="secondary-btn" type="button" hidden>טען עוד</button>
+      </div>
+    </section>
+
+    <section id="colorsTab" class="tab-panel" data-panel="colors">
+      <form id="colorsForm" class="settings-form">
+        <div id="colorsAutoSaveStatus" class="autosave-status" role="status" hidden></div>
+
+        <section class="card">
+          <div class="card-title-row">
+            <h2>צבעים</h2>
+            <button id="addColorBtn" class="secondary-btn" type="button">הוסף צבע</button>
+          </div>
+          <p class="card-note" id="menuColorLimitNote"></p>
+          <div id="colorsEditor" class="colors-editor"></div>
+          <div class="centered-actions" style="padding: 12px 16px 16px;">
+            <button id="resetColorsBtn" class="pink-btn" type="button">איפוס צבעים</button>
+          </div>
+        </section>
+
+      </form>
+    </section>
+
+    <section id="settingsTab" class="tab-panel" data-panel="settings">
+      <form id="preferencesForm" class="settings-form">
+        <div id="preferencesAutoSaveStatus" class="autosave-status" role="status" hidden></div>
+        <section class="card settings-card">
+          <div class="card-title-row"><h2>תצוגת ההדגשות</h2></div>
+          <div class="settings-grid">
+            <label>סגנון תצוגה
+              <select id="viewMode" name="viewMode">
+                <option value="content">תוכן</option>
+                <option value="tiles">אריחים</option>
+                <option value="list">רשימה</option>
+                <option value="compact">פריטים קטנים</option>
+                <option value="details">פרטים</option>
+              </select>
+            </label>
+            <label>סוג גופן
+              <select id="fontFamily" name="fontFamily">
+                <option value="app">גופן אוצריא</option>
+                <option value="system">גופן המערכת</option>
+                <option value="FrankRuhlCLM">פרנק־רוהל</option>
+                <option value="TaameyDavidCLM">דוד</option>
+                <option value="TaameyAshkenaz">טעמי אשכנז</option>
+                <option value="KeterYG">כתר</option>
+                <option value="Shofar">שופר</option>
+                <option value="NotoSerifHebrew">נוטו</option>
+                <option value="NotoRashiHebrew">רש״י</option>
+                <option value="Tinos">טינוס</option>
+                <option value="Rubik">רוביק</option>
+              </select>
+            </label>
+            <label class="range-setting">גודל גופן <output id="fontSizeValue" for="fontSize"></output>
+              <input id="fontSize" name="fontSize" type="range" min="13" max="26" step="1" />
+            </label>
+            <label class="range-setting">מרווח בין השורות <output id="lineHeightValue" for="lineHeight"></output>
+              <input id="lineHeight" name="lineHeight" type="range" min="1.2" max="2" step="0.1" />
+            </label>
+          </div>
+        </section>
+
+        <section class="card settings-card centered-card">
+          <div class="card-title-row"><h2>תפריט סימון</h2></div>
+          <fieldset class="radio-group" id="menuStyleGroup">
+            <legend>סגנון תפריט</legend>
+            <label>
+              <input type="radio" name="menuStyle" value="buttonRow" />
+              <span>שורת צבעים</span>
+              <span class="radio-hint">בחירת צבע מהירה בשורה אחת</span>
+            </label>
+            <label>
+              <input type="radio" name="menuStyle" value="submenu" />
+              <span>תת-תפריט</span>
+              <span class="radio-hint">הצגת הצבעים ברשימה נפתחת</span>
+            </label>
+          </fieldset>
+          <p class="card-note settings-note">המחק מופיע כשאפילו חלק קטן מהטקסט המסומן נבחר.</p>
+        </section>
+
+        <section class="card settings-card centered-card">
+          <div class="card-title-row"><h2>ניהול תגיות</h2></div>
+          <p class="card-note">שינוי שם, מיזוג או מחיקה בכל ההדגשות.</p>
+          <div class="tag-manager-grid">
+            <label>תגית קיימת<select id="manageTagSource"></select></label>
+            <label>שם או יעד חדש<input id="manageTagTarget" type="text" maxlength="40" placeholder="שם התגית" /></label>
+            <button id="renameTagBtn" class="secondary-btn" type="button">שנה שם</button>
+            <button id="mergeTagBtn" class="secondary-btn" type="button">מזג לתגית</button>
+            <button id="deleteTagBtn" class="danger-btn" type="button">מחק תגית</button>
+          </div>
+        </section>
+
+        <section class="card settings-card centered-card">
+          <div class="card-title-row"><h2>תבנית ייצוא לקריאה</h2></div>
+          <div class="export-template-grid">
+            <label>פורמט
+              <select id="humanExportFormat">
+                <option value="markdown">Markdown</option>
+                <option value="html">HTML</option>
+                <option value="text">טקסט פשוט</option>
+              </select>
+            </label>
+            <label class="toggle-row"><input id="exportIncludeBook" type="checkbox" /> שם הספר</label>
+            <label class="toggle-row"><input id="exportIncludeRef" type="checkbox" /> מראה מקום</label>
+            <label class="toggle-row"><input id="exportIncludeNote" type="checkbox" /> הערות</label>
+            <label class="toggle-row"><input id="exportIncludeTags" type="checkbox" /> תגיות</label>
+            <label class="toggle-row"><input id="exportIncludeDate" type="checkbox" /> תאריך</label>
+            <button id="exportVisibleHumanBtn" class="primary-btn" type="button">ייצא את התוצאות המוצגות</button>
+          </div>
+        </section>
+
+        <section class="card settings-card centered-card">
+          <div class="card-title-row"><h2>גיבוי ושחזור</h2></div>
+          <p class="card-note backup-note">קובץ הגיבוי כולל את כל ההדגשות, הצבעים והגדרות התצוגה.</p>
+          <div class="backup-actions">
+            <button id="exportBackupBtn" class="secondary-btn" type="button">ייצוא גיבוי</button>
+            <label>אופן הייבוא
+              <select id="importMode">
+                <option value="merge">מיזוג עם הקיים</option>
+                <option value="replace">החלפת כל הנתונים</option>
+              </select>
+            </label>
+            <button id="importBackupBtn" class="secondary-btn" type="button">ייבוא גיבוי</button>
+          </div>
+          <input id="backupFileInput" type="file" accept="application/json,.json" hidden />
+        </section>
+
+        <div class="form-actions centered-actions">
+          <button id="resetPreferencesBtn" class="pink-btn" type="button">איפוס תצוגה</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="editHighlightDialog" class="edit-dialog">
+    <form id="editHighlightForm" method="dialog">
+      <div class="dialog-title-row">
+        <h2>עריכת הדגשה</h2>
+        <button id="closeEditDialogBtn" class="icon-btn" type="button" aria-label="סגור">×</button>
+      </div>
+      <p id="editHighlightPreview" class="edit-preview"></p>
+      <label>צבע
+        <select id="editHighlightColor"></select>
+      </label>
+      <label>הערה אישית
+        <textarea id="editHighlightNote" maxlength="1000" rows="5" placeholder="אפשר להוסיף כאן הערה על ההדגשה"></textarea>
+      </label>
+      <label>תגיות
+        <input id="editHighlightTags" type="text" maxlength="500" placeholder="לדוגמה: אמונה, תפילה, לעיון" />
+        <span class="field-hint">יש להפריד תגיות בפסיקים. עד 12 תגיות.</span>
+      </label>
+      <label class="toggle-row edit-favorite-row">
+        <input id="editHighlightFavorite" type="checkbox" /> מועדפת
+      </label>
+      <div class="form-actions">
+        <button id="cancelEditHighlightBtn" class="secondary-btn" type="button">ביטול</button>
+        <button class="primary-btn" type="submit">שמור שינויים</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
