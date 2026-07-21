@@ -1,0 +1,18 @@
+name: Publish plugin
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Otzaria/otzaria-plugin-validator@v1
+        with:
+          otzaria-user: ${{ secrets.OTZARIA_USER }}
+          otzaria-password: ${{ secrets.OTZARIA_PASSWORD }}
+          fail-on-warnings: true
+          screenshots: screenshots/main.png
