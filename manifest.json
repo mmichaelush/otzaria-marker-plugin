@@ -22,7 +22,6 @@
     "fs.user_files.read",
     "events.subscribe:reader.selection_changed",
     "events.subscribe:reader.current_ref_changed",
-    "events.subscribe:reader.sectionContentChanged",
     "events.subscribe:navigation.changed"
   ],
   "network": {
