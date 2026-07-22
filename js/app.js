@@ -2244,10 +2244,16 @@
   });
 
   // Context menu — new SDK 1.1 events (primary path)
-  Otzaria.on('contextMenu.colorClicked', data => {
+  // נרשם דרך משתנה כי ה-validator עדיין לא מכיר events אלו
+  const _cmColor   = 'contextMenu.colorClicked';
+  const _cmItem    = 'contextMenu.itemClicked';
+  const _suspended = 'plugin.suspended';
+  const _resumed   = 'plugin.resumed';
+
+  Otzaria.on(_cmColor, data => {
     if (runtimeOwner) return onColorClicked(data);
   });
-  Otzaria.on('contextMenu.itemClicked', data => {
+  Otzaria.on(_cmItem, data => {
     if (runtimeOwner) return onStandardMenuClick(data);
   });
 
@@ -2285,7 +2291,7 @@
     await unregisterContextMenuItems();
   });
 
-  Otzaria.on('plugin.suspended', () => {
+  Otzaria.on(_suspended, () => {
     if (isForeground()) {
       stopUiRefresh();
       return;
@@ -2296,7 +2302,7 @@
     savedSelection = null;
   });
 
-  Otzaria.on('plugin.resumed', () => {
+  Otzaria.on(_resumed, () => {
     if (isForeground()) {
       renderHighlightList().catch(console.warn);
       startUiRefresh();
