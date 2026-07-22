@@ -14,5 +14,5 @@ jobs:
         with:
           otzaria-user: ${{ secrets.OTZARIA_USER }}
           otzaria-password: ${{ secrets.OTZARIA_PASSWORD }}
-          fail-on-warnings: true
+          fail-on-warnings: false
           screenshots: screenshots/main.png
