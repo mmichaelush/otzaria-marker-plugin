@@ -140,18 +140,18 @@ input[type="color"] { padding: 3px; min-width: 44px; inline-size: 48px; }
 .highlights-list[data-view="list"] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .highlights-list[data-view="list"] .highlight-card { border-radius: var(--radius-sm); padding-block: 8px; box-shadow: none; }
 .highlights-list[data-view="list"] .highlight-card { grid-template-columns: 20px 22px minmax(0, 1fr); }
-.highlights-list[data-view="list"] .dot { width: 18px; height: 18px; border-radius: 5px; box-shadow: none !important; }
+.highlights-list[data-view="list"] .dot { width: 18px; height: 18px; border-radius: var(--radius-sm); box-shadow: none !important; }
 .highlights-list[data-view="list"] .highlight-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .highlights-list[data-view="list"] .row-actions { grid-column: 3; justify-content: flex-end; }
 .highlights-list[data-view="compact"] { gap: 2px; }
 .highlights-list[data-view="compact"] .highlight-card { grid-template-columns: 18px 18px minmax(0, 1fr) auto; padding: 5px 8px; border: 0; border-radius: var(--radius-sm); box-shadow: none; }
-.highlights-list[data-view="compact"] .dot { width: 14px; height: 14px; border-radius: 4px; margin-top: 5px; box-shadow: none !important; }
+.highlights-list[data-view="compact"] .dot { width: 14px; height: 14px; border-radius: var(--radius-sm); margin-top: 5px; box-shadow: none !important; }
 .highlights-list[data-view="compact"] .highlight-meta { display: none; }
 .highlights-list[data-view="compact"] .highlight-title { display: inline; margin-inline-end: 8px; }
 .highlights-list[data-view="compact"] .highlight-text { display: inline; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .highlights-list[data-view="compact"] .small-btn { min-height: 30px; padding-block: 3px; }
 .highlights-list[data-view="details"] .highlight-card { grid-template-columns: 20px 24px minmax(0, 1fr) auto; align-items: center; border-radius: 0; border-inline: 0; border-block-start: 0; padding-block: 8px; box-shadow: none; }
-.highlights-list[data-view="details"] .dot { width: 18px; height: 18px; border-radius: 5px; margin: 0; box-shadow: none !important; }
+.highlights-list[data-view="details"] .dot { width: 18px; height: 18px; border-radius: var(--radius-sm); margin: 0; box-shadow: none !important; }
 .highlights-list[data-view="details"] .highlight-body { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(180px, 1.5fr); column-gap: 14px; align-items: center; min-width: 0; }
 .highlights-list[data-view="details"] .highlight-title { grid-column: 1; grid-row: 1; }
 .highlights-list[data-view="details"] .highlight-text { grid-column: 2; grid-row: 1 / span 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -161,7 +161,7 @@ input[type="color"] { padding: 3px; min-width: 44px; inline-size: 48px; }
 .marker-icon { width: 18px; height: 18px; color: rgba(0,0,0,0.55); }
 .highlight-title { font-weight: 800; margin-bottom: 3px; }
 .stale-badge { font-size: .78em; margin-right: 4px; opacity: .75; }
-.favorite-badge { color: var(--color-favorite, #b77900); margin-inline-end: 5px; text-shadow: 0 1px 1px rgba(0,0,0,.12); }
+.favorite-badge { color: var(--color-tertiary, var(--color-secondary)); margin-inline-end: 5px; text-shadow: 0 1px 1px rgba(0,0,0,.12); }
 .edit-favorite-row { flex-direction: row !important; align-items: center; gap: 8px; font-size: .92em; }
 .highlight-card[data-stale] { border-color: var(--color-outline); opacity: .75; }
 .highlight-text { color: var(--color-on-surface-variant); overflow-wrap: anywhere; }
@@ -333,7 +333,7 @@ input[type="range"] { width: 100%; min-height: 40px; accent-color: var(--color-p
 .picker-color-btn {
   width: 32px;
   height: 32px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   border: 2px solid transparent;
   box-shadow: 0 1px 3px rgba(0,0,0,.20);
   transition: transform .12s, box-shadow .12s, border-color .12s;
@@ -533,7 +533,7 @@ body.dark-mode .highlight-card, body.dark-mode .card { box-shadow: 0 2px 8px rgb
   display: block;
   inline-size: 30px;
   block-size: 24px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--picked-color);
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.18);
 }
