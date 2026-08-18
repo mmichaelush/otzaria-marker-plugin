@@ -38,6 +38,9 @@
   let uiBound           = false;
   let lastSelection     = null;
   let savedSelection    = null;
+  // Last reader.selection_changed payload info: its currentIndex is the
+  // selection START line — needed to anchor multi-line selections.
+  let lastEventSelection = null;
   let selectionTimer    = null;
   let dragSrcIndex      = null;
   let uiRefreshTimer    = null;
@@ -354,15 +357,70 @@
     return !!a && !!b && a.start < b.end && b.start < a.end;
   }
 
+  function compactText(value) {
+    return String(value || '').replace(/\s+/g, '');
+  }
+
+  /** Multi-line selection pieces — one per source line (empty lines dropped) */
+  function splitSelectionPieces(text) {
+    return String(text || '').split('\n').map(piece => piece.trim()).filter(Boolean);
+  }
+
+  /** Parts of a split (multi-line) highlight are removed together */
+  function expandByGroup(items) {
+    const groups = new Set(items.map(item => item.groupId).filter(Boolean));
+    if (!groups.size) return items;
+    const out = [...items];
+    for (const item of allHighlights) {
+      if (item.groupId && groups.has(item.groupId) && !out.includes(item)) out.push(item);
+    }
+    return out;
+  }
+
+  /** Start line of a multi-line selection, when the last selection event matches it */
+  function multiLineStartIndexHint(selection) {
+    if (!lastEventSelection || !Number.isInteger(lastEventSelection.currentIndex)) return null;
+    return compactText(lastEventSelection.text) === compactText(selectedTextOf(selection))
+      ? lastEventSelection.currentIndex
+      : null;
+  }
+
   function highlightsOverlappingSelection(selection) {
     const bookId = selection?.currentBookId || selection?.bookId;
     const index  = selection?.currentIndex ?? selection?.sectionIndex;
     if (!bookId || index == null) return [];
-    return allHighlights.filter(item =>
+    const pieces = splitSelectionPieces(selectedTextOf(selection));
+    if (pieces.length > 1 && !selection.sourceRange) {
+      // Multi-line selection carries no per-line anchor — match by line span.
+      const start = multiLineStartIndexHint(selection) ?? index;
+      const end = start + pieces.length - 1;
+      return expandByGroup(allHighlights.filter(item =>
+        item.bookId === bookId &&
+        item.sectionIndex >= start &&
+        item.sectionIndex <= end
+      ));
+    }
+    return expandByGroup(allHighlights.filter(item =>
       item.bookId === bookId &&
       item.sectionIndex === index &&
       (!selection.sourceRange || rangesOverlap(item.sourceRange, selection.sourceRange))
-    );
+    ));
+  }
+
+  /** Overlaps against resolved per-section targets (multi-line apply) */
+  function highlightsOverlappingTargets(bookId, targets) {
+    const out = [];
+    for (const target of targets) {
+      for (const item of allHighlights) {
+        if (item.bookId === bookId &&
+            item.sectionIndex === target.sectionIndex &&
+            (!target.range || rangesOverlap(item.sourceRange, target.range)) &&
+            !out.includes(item)) {
+          out.push(item);
+        }
+      }
+    }
+    return expandByGroup(out);
   }
 
   async function hasHighlightOverlappingSelection(selection) {
@@ -540,6 +598,10 @@
     const sel = Object.assign({}, data, { rememberedAt: Date.now() });
     lastSelection  = sel;
     savedSelection = sel;
+    lastEventSelection = {
+      text: selectedTextOf(sel),
+      currentIndex: sel.currentIndex ?? sel.sectionIndex ?? null
+    };
     window.clearTimeout(selectionTimer);
     selectionTimer = window.setTimeout(() => {
       selectionRevision++;
@@ -597,6 +659,61 @@
   // Storage schema: each key = HIGHLIGHT_PREFIX + highlightId
   // Each record stores: highlightId, bookId, sectionIndex, colorId, color, text,
   //                     ref, book, note, tags, sourceRange, version, etag, timestamp
+  //                     + groupId (shared by the parts of a multi-line highlight)
+
+  async function findPieceOccurrence(bookId, sectionIndex, piece, prefer) {
+    try {
+      const res = await call('reader.findTextOccurrences', {
+        bookId,
+        sectionIndex,
+        query: piece,
+        layer: 'source',
+        normalize: { profile: 'search', overrides: { ignorePunctuation: true } },
+        limit: 200
+      });
+      const results = res?.results || [];
+      if (!results.length) return null;
+      // First piece is a line suffix → prefer the last occurrence;
+      // any other piece starts the line → prefer the first.
+      return prefer === 'last' ? results[results.length - 1] : results[0];
+    } catch (_) { return null; }
+  }
+
+  /**
+   * Anchors each line of a multi-line selection in its own section, via
+   * reader.findTextOccurrences (available since Otzaria 0.9.95).
+   * Returns [{sectionIndex, range, text}] or null when unresolvable.
+   */
+  async function resolveMultiSectionTargets(selection) {
+    const bookId = selection?.currentBookId || selection?.bookId;
+    const clickedIndex = selection?.currentIndex ?? selection?.sectionIndex;
+    const pieces = splitSelectionPieces(selectedTextOf(selection));
+    if (!bookId || clickedIndex == null || pieces.length < 2) return null;
+
+    const candidates = [];
+    const hint = multiLineStartIndexHint(selection);
+    if (hint != null) candidates.push(hint);
+    // Without a hint the clicked line still lies somewhere within the span.
+    for (let start = clickedIndex; start > clickedIndex - pieces.length; start--) {
+      if (start >= 0 && !candidates.includes(start)) candidates.push(start);
+    }
+    for (const start of candidates) {
+      const targets = [];
+      let resolved = true;
+      for (let k = 0; k < pieces.length; k++) {
+        const prefer = k === 0 ? 'last' : 'first';
+        const occurrence = await findPieceOccurrence(bookId, start + k, pieces[k], prefer);
+        if (!occurrence?.range) { resolved = false; break; }
+        targets.push({
+          sectionIndex: start + k,
+          range: occurrence.range,
+          text: occurrence.text || pieces[k]
+        });
+      }
+      if (resolved) return targets;
+    }
+    return null;
+  }
 
   function makeHighlightId(bookId, sectionIndex, colorId) {
     const random = globalThis.crypto?.getRandomValues
@@ -654,7 +771,17 @@
         return;
       }
 
-      if (!selection.sourceRange) {
+      const bookId       = selection.currentBookId || selection.bookId;
+      const sectionIndex = selection.currentIndex  ?? selection.sectionIndex;
+
+      // Single-line selection \u2192 one target; multi-line \u2192 anchor per section.
+      // A multi-line selection never trusts sourceRange: the Host may return
+      // a range covering only the first line, silently dropping the rest.
+      const pieces = splitSelectionPieces(selectedTextOf(selection));
+      const targets = pieces.length <= 1 && selection.sourceRange
+        ? [{ sectionIndex, range: selection.sourceRange, text: selectedTextOf(selection) }]
+        : await resolveMultiSectionTargets(selection);
+      if (!targets) {
         await call('ui.showMessage', {
           message: '\u05DC\u05D0 \u05E0\u05D9\u05EA\u05DF \u05DC\u05E1\u05DE\u05DF \u05D0\u05EA \u05D4\u05D8\u05E7\u05E1\u05D8 \u05D4\u05E0\u05D1\u05D7\u05E8 \u2014 \u05D4\u05DE\u05D9\u05E7\u05D5\u05DD \u05D4\u05DE\u05D3\u05D5\u05D9\u05E7 \u05DC\u05D0 \u05D6\u05D5\u05D4\u05D4.\n\u05D9\u05D9\u05EA\u05DB\u05DF \u05E9\u05D4\u05DE\u05D9\u05DC\u05D4 \u05DE\u05D5\u05D7\u05DC\u05E4\u05EA \u05D1\u05EA\u05E6\u05D5\u05D2\u05D4. \u05E0\u05E1\u05D4 \u05DC\u05D1\u05D7\u05D5\u05E8 \u05D8\u05E7\u05E1\u05D8 \u05D0\u05D7\u05E8.'
         }).catch(() => {});
@@ -662,12 +789,9 @@
         return;
       }
 
-      const bookId       = selection.currentBookId || selection.bookId;
-      const sectionIndex = selection.currentIndex  ?? selection.sectionIndex;
-
       // A color action on an already highlighted range is a replacement.
       // Remove every overlapping record first so only one color remains.
-      const overlapping = highlightsOverlappingSelection(selection);
+      const overlapping = highlightsOverlappingTargets(bookId, targets);
       for (const item of overlapping) {
         if (item.highlightId) {
           await call('reader.clearHighlight', {
@@ -682,34 +806,50 @@
         const removedIds = new Set(overlapping.map(item => item.highlightId));
         allHighlights = allHighlights.filter(item => !removedIds.has(item.highlightId));
       }
-      const highlightId  = makeHighlightId(bookId, sectionIndex, color.id);
 
-      const hlRes = await Otzaria.call('reader.setHighlight', {
-        highlightId,
-        bookId,
-        sectionIndex,
-        range:    selection.sourceRange,
-        style:    buildHighlightStyle(color),
-        metadata: { source: 'manual', tags: [color.label] }
-      });
+      const groupId = targets.length > 1
+        ? makeHighlightId(bookId, targets[0].sectionIndex, `group-${color.id}`)
+        : null;
+      const applied = [];
+      try {
+        for (const target of targets) {
+          const highlightId = makeHighlightId(bookId, target.sectionIndex, color.id);
+          const hlRes = await Otzaria.call('reader.setHighlight', {
+            highlightId,
+            bookId,
+            sectionIndex: target.sectionIndex,
+            range:    target.range,
+            style:    buildHighlightStyle(color),
+            metadata: { source: 'manual', tags: [color.label] }
+          });
+          if (!hlRes.success) throw new Error('setHighlight failed: ' + hlRes.error?.message);
+          applied.push(highlightId);
 
-      if (!hlRes.success) throw new Error('setHighlight failed: ' + hlRes.error?.message);
-
-      // Persist to plugin storage, including version + etag for future updates
-      await saveHighlightMeta({
-        highlightId,
-        bookId,
-        sectionIndex,
-        colorId:     color.id,
-        color:       color.hex,
-        style:       buildHighlightStyle(color),
-        text:        selectedTextOf(selection),
-        ref:         selection.currentRef  || '',
-        book:        selection.currentBook || bookId,
-        sourceRange: selection.sourceRange,
-        version:     hlRes.data?.version ?? null,
-        etag:        hlRes.data?.etag    ?? null
-      });
+          // Persist to plugin storage, including version + etag for future updates
+          await saveHighlightMeta({
+            highlightId,
+            ...(groupId ? { groupId } : {}),
+            bookId,
+            sectionIndex: target.sectionIndex,
+            colorId:     color.id,
+            color:       color.hex,
+            style:       buildHighlightStyle(color),
+            text:        target.text,
+            ref:         selection.currentRef  || '',
+            book:        selection.currentBook || bookId,
+            sourceRange: target.range,
+            version:     hlRes.data?.version ?? null,
+            etag:        hlRes.data?.etag    ?? null
+          });
+        }
+      } catch (err) {
+        // A partial multi-line highlight is misleading \u2014 roll back what landed.
+        for (const highlightId of applied) {
+          await call('reader.clearHighlight', { highlightId }).catch(() => {});
+          await call('storage.remove', { key: highlightKey(highlightId) }).catch(() => {});
+        }
+        throw err;
+      }
 
       lastSelection  = null;
       savedSelection = null;
@@ -1144,7 +1284,11 @@
       }
       await renderHighlightList();
       await patchOrRebuildMenu();
-      await call('ui.showSuccess', { message: '\u05D4\u05D4\u05D3\u05D2\u05E9\u05D4 \u05D4\u05D5\u05E1\u05E8\u05D4' }).catch(() => {});
+      await call('ui.showSuccess', {
+        message: matches.length > 1
+          ? '\u05D4\u05E1\u05D9\u05DE\u05D5\u05DF \u05D4\u05D5\u05E1\u05E8 \u05DE\u05DB\u05DC \u05D4\u05E9\u05D5\u05E8\u05D5\u05EA'
+          : '\u05D4\u05D4\u05D3\u05D2\u05E9\u05D4 \u05D4\u05D5\u05E1\u05E8\u05D4'
+      }).catch(() => {});
     } catch (err) { console.error(err); }
   }
 
@@ -2230,6 +2374,7 @@
       selectionRevision++;
       lastSelection = null;
       savedSelection = null;
+      lastEventSelection = null;
       await unregisterContextMenuItems();
       return;
     }
