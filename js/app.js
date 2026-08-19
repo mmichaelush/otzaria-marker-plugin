@@ -1,35 +1,28 @@
 ﻿(function () {
   'use strict';
 
-  const SETTINGS_KEY     = 'marker_settings';
-  const HIGHLIGHT_PREFIX = 'highlight:';
-  const MAX_COLORS       = 12;
-  const MAX_MENU_COLORS  = 5;
-  const HIGHLIGHTS_PAGE_SIZE = 100;
-
-  const DEFAULT_SETTINGS = {
-    colors: [
-      { id: 'yellow', hex: '#f1e784ff', label: '\u05E6\u05D4\u05D5\u05D1',  enabled: true  },
-      { id: 'green',  hex: '#8bcf8dff', label: '\u05D9\u05E8\u05D5\u05E7',  enabled: true  },
-      { id: 'blue',   hex: '#88bde9ff', label: '\u05DB\u05D7\u05D5\u05DC',  enabled: true  },
-      { id: 'red',    hex: '#f37e75ff', label: '\u05D0\u05D3\u05D5\u05DD',  enabled: true  },
-      { id: 'orange', hex: '#f0bd72ff', label: '\u05DB\u05EA\u05D5\u05DD',  enabled: true  },
-      { id: 'purple', hex: '#e297f0ff', label: '\u05E1\u05D2\u05D5\u05DC',  enabled: false },
-    ],
-    defaultColorId: 'yellow',
-    menuStyle: 'buttonRow',
-    appearance: {
-      viewMode: 'content',
-      fontFamily: 'app',
-      fontSize: 18,
-      lineHeight: 1.5
-    },
-    exportTemplate: {
-      format: 'markdown', includeBook: true, includeRef: true,
-      includeNote: true, includeTags: true, includeDate: true
-    },
-    maxColors: MAX_COLORS
-  };
+  // Dependencies are explicit at the boundary: domain rules stay testable,
+  // while this module owns only session state, DOM, and orchestration.
+  const {
+    SETTINGS_KEY, HIGHLIGHT_PREFIX, MAX_COLORS, MAX_MENU_COLORS,
+    HIGHLIGHTS_PAGE_SIZE, DEFAULT_SETTINGS, structuredCloneSafe, escapeHtml,
+    hexToRgba, toSafeHex, normalizeSettings, normalizeSearchText, normalizeTags,
+    rangeBounds, rangesOverlap, compactText, splitSelectionPieces,
+    selectedTextOf, hasUsableSelection, buildHighlightStyle, makeHighlightId,
+    isSafeHighlightId, normalizeBootContext, ownsLegacyRuntime
+  } = MarkerDomain;
+  const { call, callRaw, createLogger, protectEvent } = MarkerRuntime;
+  const logger = createLogger('app');
+  const PLUGIN_VERSION = '0.9.1';
+  const COLOR_PALETTE = Object.freeze([
+    ['#B7DDBB', 'מרווה'], ['#FFD08A', 'משמש'], ['#FFE27A', 'זהב'],
+    ['#FFF3A6', 'לימון'], ['#B8D8F0', 'שמיים'], ['#D8B4E2', 'לבנדר'],
+    ['#F3B6C8', 'ורוד'], ['#C9C2F5', 'סגלגל']
+  ]);
+  const READER_SELECTION_CONTEXTS = Object.freeze([
+    'reader-selection',
+    'reader-page-shape-selection'
+  ]);
 
   let settings          = structuredCloneSafe(DEFAULT_SETTINGS);
   let menuRegistered    = false;
@@ -59,87 +52,77 @@
   const autoSaveRevisions = new Map();
   let runMode           = 'foreground';
   let runtimeOwner      = true;
-
-  function hasStartupPermission(permissions) {
-    return Array.isArray(permissions) && permissions.includes('app.run_on_startup');
-  }
+  let hostContext       = normalizeBootContext(null);
+  let enhancedSelectCounter = 0;
 
   function isForeground() { return runMode === 'foreground'; }
+
+  function applyHostMetadata(context) {
+    if (!isForeground()) return;
+    const root = document.documentElement;
+    root.dataset.hostVersion = context.appVersion;
+    root.dataset.hostLanguage = context.language;
+    root.dataset.hostTextDirection = context.textDirection;
+  }
+
+  function colorForSelectValue(value) {
+    const color = settings.colors.find(item => item.id === value);
+    return color ? toSafeHex(color.hex) : '';
+  }
+
+  function selectOptionHtml(select, option) {
+    const color = colorForSelectValue(option.value);
+    const selected = option.value === select.value;
+    return `<button type="button" class="otz-select-option${selected ? ' is-selected' : ''}" data-select-value="${escapeHtml(option.value)}" role="option" aria-selected="${selected}" ${option.disabled ? 'disabled' : ''}>${color ? `<span class="option-color-swatch" style="--option-color:${escapeHtml(color)}"></span>` : '<span class="otz-option-spacer" aria-hidden="true"></span>'}<span class="otz-option-label">${escapeHtml(option.textContent || '')}</span>${selected ? '<svg class="otz-option-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>' : ''}</button>`;
+  }
+
+  function syncEnhancedSelect(select) {
+    const shell = select?._otzSelectShell;
+    if (!shell?.isConnected) return;
+    const selected = select.options[select.selectedIndex] || select.options[0];
+    const color = selected ? colorForSelectValue(selected.value) : '';
+    const trigger = shell.querySelector('.otz-select-trigger');
+    const label = trigger?.querySelector('.otz-select-value');
+    const swatch = trigger?.querySelector('.option-color-swatch');
+    if (label) label.textContent = selected?.textContent || 'בחירה';
+    if (swatch) {
+      swatch.hidden = !color;
+      if (color) swatch.style.setProperty('--option-color', color);
+    }
+    shell.querySelector('.otz-select-menu').innerHTML = [...select.options]
+      .map(option => selectOptionHtml(select, option)).join('');
+    shell.classList.toggle('is-disabled', select.disabled);
+    trigger.setAttribute('aria-disabled', String(select.disabled));
+  }
+
+  function enhanceSelect(select) {
+    if (!select || select.dataset.otzEnhanced === 'true') {
+      if (select) syncEnhancedSelect(select);
+      return;
+    }
+    select.dataset.otzEnhanced = 'true';
+    select.classList.add('otz-native-select');
+    const shell = document.createElement('details');
+    shell.className = 'otz-select';
+    shell.dataset.selectId = select.id || `otz-select-${++enhancedSelectCounter}`;
+    shell.innerHTML = `<summary class="otz-select-trigger"><span class="option-color-swatch" hidden></span><span class="otz-select-value">בחירה</span><svg class="otz-select-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg></summary><div class="otz-select-menu" role="listbox"></div>`;
+    select.insertAdjacentElement('afterend', shell);
+    select._otzSelectShell = shell;
+    syncEnhancedSelect(select);
+  }
+
+  function enhanceSelects(root = document) {
+    $$('select', root).forEach(enhanceSelect);
+  }
+
+  function syncAllEnhancedSelects() {
+    $$('select[data-otz-enhanced="true"]').forEach(syncEnhancedSelect);
+  }
 
   const $  = (sel, ctx = document) => ctx.querySelector(sel);
   const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 
-  function structuredCloneSafe(v) { return JSON.parse(JSON.stringify(v)); }
-
-  // ── SDK wrapper ────────────────────────────────────────────────────────────
-  async function call(method, payload) {
-    const res = await Otzaria.call(method, payload || {});
-    if (!res || !res.success) {
-      const code = res?.error?.code || 'error.unknown';
-      const error = new Error(`${method} [${code}]: ${res?.error?.message || 'unknown error'}`);
-      error.code = code;
-      error.category = res?.error?.category;
-      error.retryable = Boolean(res?.error?.retryable);
-      throw error;
-    }
-    return res.data;
-  }
-
-  // ── Utils ──────────────────────────────────────────────────────────────────
-  function escapeHtml(v) {
-    return String(v ?? '').replace(/[&<>'"]/g,
-      ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
-  }
-
-  function hexToRgba(hex, a) {
-    const m = /^#?([0-9a-f]{6})/i.exec(hex || '');
-    if (!m) return `rgba(103,80,164,${a})`;
-    const n = m[1];
-    return `rgba(${parseInt(n.slice(0,2),16)},${parseInt(n.slice(2,4),16)},${parseInt(n.slice(4,6),16)},${a})`;
-  }
-
-  /** Strip alpha so color is always safe #RRGGBB for the Host API */
-  function toSafeHex(hex) {
-    const m = /^#([0-9a-fA-F]{6})/.exec(hex || '');
-    return m ? `#${m[1]}` : '#FFF176';
-  }
-
   // ── Settings ───────────────────────────────────────────────────────────────
-  function normalizeSettings(raw) {
-    const s = Object.assign(structuredCloneSafe(DEFAULT_SETTINGS), raw || {});
-    s.colors = (Array.isArray(s.colors) ? s.colors : DEFAULT_SETTINGS.colors).slice(0, MAX_COLORS);
-    s.colors = s.colors.map((c, i) => ({
-      id:      String(c.id || `custom-${Date.now()}-${i}`).replace(/[^a-zA-Z0-9_-]/g, '-'),
-      hex:     /^#[0-9a-fA-F]{6,8}$/.test(c.hex || '') ? c.hex : (DEFAULT_SETTINGS.colors[i]?.hex || '#FFF176'),
-      label:   String(c.label || '\u05E6\u05D1\u05E2').slice(0, 24),
-      enabled: Boolean(c.enabled),
-      opacity: Math.min(1, Math.max(0.15, Number(c.opacity) || 0.65)),
-      markerMode: ['text-background', 'underline', 'box', 'line-marker'].includes(c.markerMode) ? c.markerMode : 'text-background',
-      borderRadius: Math.min(16, Math.max(0, Number(c.borderRadius) || 3))
-    }));
-    s.maxColors = MAX_COLORS;
-    s.menuStyle = s.menuStyle === 'submenu' ? 'submenu' : 'buttonRow';
-    const appearance = Object.assign({}, DEFAULT_SETTINGS.appearance, s.appearance || {});
-    const allowedViews = ['content', 'tiles', 'list', 'compact', 'details'];
-    const allowedFonts = [
-      'app', 'system', 'FrankRuhlCLM', 'TaameyDavidCLM', 'TaameyAshkenaz',
-      'KeterYG', 'Shofar', 'NotoSerifHebrew', 'NotoRashiHebrew', 'Tinos', 'Rubik'
-    ];
-    appearance.viewMode = allowedViews.includes(appearance.viewMode) ? appearance.viewMode : 'content';
-    appearance.fontFamily = allowedFonts.includes(appearance.fontFamily) ? appearance.fontFamily : 'app';
-    appearance.fontSize = Math.min(26, Math.max(13, Number(appearance.fontSize) || 18));
-    appearance.lineHeight = Math.min(2, Math.max(1.2, Number(appearance.lineHeight) || 1.5));
-    s.appearance = appearance;
-    const exportTemplate = Object.assign({}, DEFAULT_SETTINGS.exportTemplate, s.exportTemplate || {});
-    exportTemplate.format = ['markdown', 'html', 'text'].includes(exportTemplate.format) ? exportTemplate.format : 'markdown';
-    for (const key of ['includeBook', 'includeRef', 'includeNote', 'includeTags', 'includeDate']) {
-      exportTemplate[key] = exportTemplate[key] !== false;
-    }
-    s.exportTemplate = exportTemplate;
-    if (!s.colors.some(c => c.id === s.defaultColorId))
-      s.defaultColorId = s.colors.find(c => c.enabled)?.id || s.colors[0]?.id || 'yellow';
-    return s;
-  }
 
   async function loadSettings() {
     try {
@@ -166,7 +149,7 @@
       const desired = buildHighlightStyle(color);
       if (JSON.stringify(buildHighlightStyle(item.style || { hex: item.color })) === JSON.stringify(desired)) continue;
       await updateHighlightColor(item, color, { render: false }).catch(error => {
-        console.error('Failed syncing highlight style', item.highlightId, error);
+        logger.error('Failed syncing highlight style', item.highlightId, error);
       });
     }
   }
@@ -211,7 +194,7 @@
           status.textContent = 'נשמר אוטומטית ✓';
         }
       } catch (error) {
-        console.error('Automatic settings save failed', error);
+        logger.error('Automatic settings save failed', error);
         if (revision !== autoSaveRevisions.get(statusId)) return;
         if (status) {
           status.dataset.state = 'error';
@@ -283,35 +266,11 @@
       Rubik: "'Rubik', sans-serif"
     };
     document.documentElement.style.setProperty('--font-main', fontMap[appearance.fontFamily]);
-    document.documentElement.style.setProperty('--highlight-font', fontMap[appearance.fontFamily]);
     document.documentElement.style.setProperty('--highlight-font-size', `${appearance.fontSize}px`);
     document.documentElement.style.setProperty('--highlight-line-height', String(appearance.lineHeight));
     const list = $('#highlightsList');
     if (list) list.dataset.view = appearance.viewMode;
   }
-
-  function normalizeSearchText(value) {
-    return String(value || '')
-      .normalize('NFKD')
-      .replace(/[\u0591-\u05C7]/g, '')
-      .replace(/[\u200E\u200F\u202A-\u202E]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toLocaleLowerCase('he');
-  }
-
-  function normalizeTags(value) {
-    const values = Array.isArray(value) ? value : String(value || '').split(/[,،;]/);
-    const unique = new Map();
-    for (const raw of values) {
-      const tag = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 40);
-      const key = normalizeSearchText(tag);
-      if (key && !unique.has(key)) unique.set(key, tag);
-      if (unique.size >= 12) break;
-    }
-    return [...unique.values()];
-  }
-
 
   // ── Context Menu ───────────────────────────────────────────────────────────
   // Strategy:
@@ -320,9 +279,10 @@
   //                                  falls back to full rebuild only on error
   //   • unregisterContextMenuItems() — removes the single root item
 
-  async function unregisterContextMenuItems() {
-    if (!menuRegistered) return;
+  async function unregisterContextMenuItems(force = false) {
+    if (!menuRegistered && !force) return;
     try { await call('reader.removeContextMenuItem', { id: 'marker-root' }); } catch (_) {}
+    // Legacy id from versions that registered a separate item per context.
     try { await call('reader.removeContextMenuItem', { id: 'marker-page-shape' }); } catch (_) {}
     try { await call('reader.removeContextMenuItem', { id: 'marker-remove' }); } catch (_) {}
     menuRegistered = false;
@@ -341,29 +301,6 @@
     registeredMenuType = null;
     await loadAllHighlights();
     await registerContextMenuItems();
-  }
-
-  function rangeBounds(range) {
-    const start = range?.start?.utf16 ?? range?.start?.grapheme;
-    const end   = range?.end?.utf16   ?? range?.end?.grapheme;
-    return Number.isInteger(start) && Number.isInteger(end) && start < end
-      ? { start, end }
-      : null;
-  }
-
-  function rangesOverlap(first, second) {
-    const a = rangeBounds(first);
-    const b = rangeBounds(second);
-    return !!a && !!b && a.start < b.end && b.start < a.end;
-  }
-
-  function compactText(value) {
-    return String(value || '').replace(/\s+/g, '');
-  }
-
-  /** Multi-line selection pieces — one per source line (empty lines dropped) */
-  function splitSelectionPieces(text) {
-    return String(text || '').split('\n').map(piece => piece.trim()).filter(Boolean);
   }
 
   /** Parts of a split (multi-line) highlight are removed together */
@@ -464,7 +401,7 @@
         id:           'mark-remove',
         type:         'item',
         title:        '\u05D4\u05E1\u05E8 \u05E1\u05D9\u05DE\u05D5\u05DF',
-        icon:         'highlight_off_24_regular'
+        icon:         'eraser_24_regular'
       });
       return { type: 'submenu', children };
     }
@@ -487,7 +424,9 @@
 
   async function registerContextMenuItems() {
     const revision = selectionRevision;
-    await unregisterContextMenuItems();
+    // Remove both current and legacy ids so a previous plugin instance cannot
+    // leave a duplicate heading beside the color row.
+    await unregisterContextMenuItems(true);
     const colors = menuColors();
     if (!colors.length) return;
 
@@ -496,32 +435,33 @@
     if (revision !== selectionRevision) return;
     const built  = buildColorItems(hasHL);
 
-    async function registerForContext(id, context) {
+    try {
       if (built.type === 'submenu') {
         await call('reader.addContextMenuItem', {
-          id,
-          type:     'submenu',
-          title:    '\u05DE\u05E8\u05E7\u05E8',
-          icon:     'highlight_24_regular',
-          contexts: [context],
+          id: 'marker-root',
+          type: 'submenu',
+          title: '\u05DE\u05E8\u05E7\u05E8',
+          icon: 'highlight_24_regular',
+          contexts: READER_SELECTION_CONTEXTS,
           children: built.children
         });
       } else {
         await call('reader.addContextMenuItem', {
-          id,
-          type:              'color-row',
-          title:             '\u05DE\u05E8\u05E7\u05E8',
-          contexts:         [context],
-          colors:            built.colorItems,
-          ...(built.children.length ? { children: built.children } : {})
+          id: 'marker-root',
+          type: 'color-row',
+          title: '\u05DE\u05E8\u05E7\u05E8',
+          contexts: READER_SELECTION_CONTEXTS,
+          colors: built.colorItems
         });
       }
+      menuRegistered = true;
+      registeredMenuType = built.type;
+    } catch (error) {
+      menuRegistered = false;
+      registeredMenuType = null;
+      await unregisterContextMenuItems(true).catch(() => {});
+      throw error;
     }
-    await registerForContext('marker-root', 'reader-selection');
-    await registerForContext('marker-page-shape', 'reader-page-shape-selection');
-    await syncStandaloneRemoveItem(hasHL, built.type);
-    menuRegistered = true;
-    registeredMenuType = built.type;
   }
 
   /**
@@ -556,8 +496,6 @@
 
     try {
       await call('reader.updateContextMenuItem', { id: 'marker-root', patch });
-      await call('reader.updateContextMenuItem', { id: 'marker-page-shape', patch });
-      await syncStandaloneRemoveItem(hasHL, built.type);
     } catch (_) {
       // Item may have been removed externally — rebuild from scratch
       menuRegistered = false;
@@ -566,32 +504,7 @@
     }
   }
 
-  async function syncStandaloneRemoveItem(hasHL, menuType) {
-    // color-row renders its eraser inline; submenu renders it as a child.
-    await call('reader.removeContextMenuItem', { id: 'marker-remove' }).catch(() => {});
-  }
-
-
   // ── Selection helpers ──────────────────────────────────────────────────────
-  function hasUsableSelection(sel) {
-    return !!(
-      sel &&
-      selectedTextOf(sel).trim() &&
-      (sel.currentBookId || sel.bookId) &&
-      (sel.currentIndex != null || sel.sectionIndex != null)
-    );
-  }
-
-  function selectedTextOf(sel) {
-    return String(
-      sel?.sourceSelectedText ||
-      sel?.renderedSelectedText ||
-      sel?.text ||
-      sel?.selectedText ||
-      ''
-    );
-  }
-
   function rememberSelection(data) {
     if (!hasUsableSelection(data)) return;
     const revision = ++selectionRevision;
@@ -715,17 +628,6 @@
     return null;
   }
 
-  function makeHighlightId(bookId, sectionIndex, colorId) {
-    const random = globalThis.crypto?.getRandomValues
-      ? [...globalThis.crypto.getRandomValues(new Uint32Array(2))]
-          .map(value => value.toString(36))
-          .join('')
-      : Math.random().toString(36).slice(2, 14);
-    return `marker-${Date.now().toString(36)}-${sectionIndex}-${colorId}-${random}`
-      .replace(/[^A-Za-z0-9._-]/g, '-')
-      .slice(0, 128);
-  }
-
   function highlightKey(highlightId) {
     return `${HIGHLIGHT_PREFIX}${highlightId}`;
   }
@@ -735,21 +637,6 @@
       key:   highlightKey(data.highlightId),
       value: Object.assign({}, data, { timestamp: Date.now() })
     });
-  }
-
-  function buildHighlightStyle(colorValue) {
-    const color = typeof colorValue === 'string'
-      ? { hex: colorValue }
-      : (colorValue || {});
-    const baseHex = color.backgroundColor || color.hex;
-    return {
-      backgroundColor: toSafeHex(baseHex),
-      opacity:         Math.min(1, Math.max(0.15, Number(color.opacity) || 0.65)),
-      underline:       color.markerMode === 'underline',
-      borderRadius:    Math.min(16, Math.max(0, Number(color.borderRadius) || 0)),
-      markerMode:      color.markerMode || 'text-background',
-      priority:        10
-    };
   }
 
   async function applyHighlight(color) {
@@ -790,22 +677,8 @@
       }
 
       // A color action on an already highlighted range is a replacement.
-      // Remove every overlapping record first so only one color remains.
+      // Keep the old records until every new target is stored successfully.
       const overlapping = highlightsOverlappingTargets(bookId, targets);
-      for (const item of overlapping) {
-        if (item.highlightId) {
-          await call('reader.clearHighlight', {
-            highlightId: item.highlightId
-          }).catch(() => {});
-        }
-        await call('storage.remove', {
-          key: item.key || highlightKey(item.highlightId)
-        }).catch(() => {});
-      }
-      if (overlapping.length) {
-        const removedIds = new Set(overlapping.map(item => item.highlightId));
-        allHighlights = allHighlights.filter(item => !removedIds.has(item.highlightId));
-      }
 
       const groupId = targets.length > 1
         ? makeHighlightId(bookId, targets[0].sectionIndex, `group-${color.id}`)
@@ -814,7 +687,7 @@
       try {
         for (const target of targets) {
           const highlightId = makeHighlightId(bookId, target.sectionIndex, color.id);
-          const hlRes = await Otzaria.call('reader.setHighlight', {
+          const hlRes = await callRaw('reader.setHighlight', {
             highlightId,
             bookId,
             sectionIndex: target.sectionIndex,
@@ -851,13 +724,23 @@
         throw err;
       }
 
+      for (const item of overlapping) {
+        if (!item.highlightId) continue;
+        try {
+          await call('reader.clearHighlight', { highlightId: item.highlightId });
+        } catch (error) {
+          if (error?.code !== 'error.highlight_not_found') throw error;
+        }
+        await call('storage.remove', { key: item.key || highlightKey(item.highlightId) });
+      }
+
       lastSelection  = null;
       savedSelection = null;
       await renderHighlightList();
       await unregisterContextMenuItems();
       await call('ui.showSuccess', { message: `\u05E0\u05E9\u05DE\u05E8 \u05D1${color.label} \u2713` }).catch(() => {});
     } catch (err) {
-      console.error('applyHighlight error:', err);
+      logger.error('applyHighlight error:', err);
       await call('ui.showError', { message: '\u05D4\u05E1\u05D9\u05DE\u05D5\u05DF \u05E0\u05DB\u05E9\u05DC. \u05D5\u05D3\u05D0 \u05E9\u05D0\u05EA\u05D4 \u05E0\u05DE\u05E6\u05D0 \u05D1\u05D8\u05E7\u05E1\u05D8 \u05E8\u05D2\u05D9\u05DC \u05D5\u05DC\u05D0 \u05D1-PDF.' }).catch(() => {});
     }
   }
@@ -905,7 +788,7 @@
       try {
         const v = await call('storage.get', { key });
         if (v?.bookId != null && v?.sectionIndex != null) items.push({ ...v, key });
-      } catch (err) { console.warn('Failed loading highlight', key, err); }
+      } catch (err) { logger.warn('Failed loading highlight', key, err); }
     }
     allHighlights = items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     return allHighlights;
@@ -968,6 +851,7 @@
       : storedItems;
     for (const item of items) {
       if (!item.highlightId || !item.sourceRange) continue;
+      if (item.status === 'failed_to_anchor') continue;
       const color = getColorById(item.colorId);
       // SDK 1.1 uses the book title as reader bookId. Early experimental
       // builds stored the database id while keeping the title in `book`.
@@ -975,7 +859,7 @@
       const canonicalBookId = String(item.book || item.bookId || '');
       if (!canonicalBookId) continue;
       try {
-        const res = await Otzaria.call('reader.setHighlight', {
+        const res = await callRaw('reader.setHighlight', {
           highlightId:  item.highlightId,
           bookId:       canonicalBookId,
           sectionIndex: item.sectionIndex,
@@ -996,7 +880,9 @@
             Object.assign(item, patch);
           }
         }
-      } catch (_) {}
+      } catch (error) {
+        logger.warn('Failed reapplying highlight', item.highlightId, error);
+      }
     }
   }
 
@@ -1095,6 +981,8 @@
       `<option value="${escapeHtml(color.id)}">${escapeHtml(color.label)}</option>`
     ).join('');
     colorSelect.value = item.colorId;
+    enhanceSelect(colorSelect);
+    syncEnhancedSelect(colorSelect);
     $('#editHighlightNote').value = item.note || '';
     $('#editHighlightTags').value = normalizeTags(item.tags).join(', ');
     $('#editHighlightFavorite').checked = item.favorite === true;
@@ -1154,7 +1042,7 @@
         await call('storage.set', { key: item.key || highlightKey(item.highlightId), value });
       } catch (err) {
         failed++;
-        console.error('Failed restoring deleted highlight', item.highlightId, err);
+        logger.error('Failed restoring deleted highlight', item.highlightId, err);
       }
     }
     dismissUndoDelete();
@@ -1180,9 +1068,11 @@
 
   async function deleteHighlight(item, { render = true, remember = true } = {}) {
     if (item.highlightId) {
-      await call('reader.clearHighlight', {
-        highlightId: item.highlightId
-      }).catch(() => {});
+      try {
+        await call('reader.clearHighlight', { highlightId: item.highlightId });
+      } catch (error) {
+        if (error?.code !== 'error.highlight_not_found') throw error;
+      }
     }
     await call('storage.remove', { key: item.key || highlightKey(item.highlightId) });
     selectedHighlightKeys.delete(item.key);
@@ -1197,7 +1087,7 @@
     let failed = 0;
     for (const item of items) {
       try { await updateHighlightColor(item, color, { render: false }); }
-      catch (err) { failed++; console.error('Failed updating highlight color', item.highlightId, err); }
+      catch (err) { failed++; logger.error('Failed updating highlight color', item.highlightId, err); }
     }
     await renderHighlightList();
     const message = failed
@@ -1215,7 +1105,7 @@
       const color = getColorById(item.colorId);
       const tags = normalizeTags([...normalizeTags(item.tags), ...addedTags]);
       try { await updateHighlightColor(item, color, { render: false, tags }); }
-      catch (err) { failed++; console.error('Failed adding tags', item.highlightId, err); }
+      catch (err) { failed++; logger.error('Failed adding tags', item.highlightId, err); }
     }
     $('#bulkTags').value = '';
     await renderHighlightList();
@@ -1241,7 +1131,7 @@
       try {
         await deleteHighlight(item, { render: false, remember: false });
         deleted.push(item);
-      } catch (err) { console.error('Failed deleting selected highlight', item.highlightId, err); }
+      } catch (err) { logger.error('Failed deleting selected highlight', item.highlightId, err); }
     }
     selectedHighlightKeys.clear();
     if (deleted.length) offerUndoDelete(deleted);
@@ -1255,7 +1145,7 @@
       content: '\u05D4\u05D0\u05DD \u05DC\u05DE\u05D7\u05D5\u05E7 \u05D0\u05EA \u05DB\u05DC \u05D4\u05D4\u05D3\u05D2\u05E9\u05D5\u05EA? \u05E4\u05E2\u05D5\u05DC\u05D4 \u05D6\u05D5 \u05D0\u05D9\u05E0\u05D4 \u05D4\u05E4\u05D9\u05DB\u05D4.'
     });
     if (!res?.confirmed) return;
-    await call('reader.clearAllHighlights', {}).catch(() => {});
+    await call('reader.clearAllHighlights', {});
     for (const item of allHighlights) {
       await call('storage.remove', { key: item.key }).catch(() => {});
     }
@@ -1276,11 +1166,13 @@
       }
       for (const item of matches) {
         if (item.highlightId) {
-          await call('reader.clearHighlight', {
-            highlightId: item.highlightId
-          }).catch(() => {});
+          try {
+            await call('reader.clearHighlight', { highlightId: item.highlightId });
+          } catch (error) {
+            if (error?.code !== 'error.highlight_not_found') throw error;
+          }
         }
-        await call('storage.remove', { key: item.key }).catch(() => {});
+        await call('storage.remove', { key: item.key });
       }
       await renderHighlightList();
       await patchOrRebuildMenu();
@@ -1289,7 +1181,7 @@
           ? '\u05D4\u05E1\u05D9\u05DE\u05D5\u05DF \u05D4\u05D5\u05E1\u05E8 \u05DE\u05DB\u05DC \u05D4\u05E9\u05D5\u05E8\u05D5\u05EA'
           : '\u05D4\u05D4\u05D3\u05D2\u05E9\u05D4 \u05D4\u05D5\u05E1\u05E8\u05D4'
       }).catch(() => {});
-    } catch (err) { console.error(err); }
+    } catch (err) { logger.error(err); }
   }
 
   async function openHighlight(item) {
@@ -1300,7 +1192,7 @@
       if (revealed === true) return;
     } catch (error) {
       // Compatibility with Otzaria versions from before revealHighlight.
-      console.warn('Precise highlight reveal unavailable; falling back', error?.code || error);
+      logger.warn('Precise highlight reveal unavailable; falling back', error?.code || error);
     }
     const bookId = String(item.book || item.bookId || '');
     if (!bookId) throw new Error('\u05DC\u05D0 \u05E0\u05E9\u05DE\u05E8 \u05DE\u05D6\u05D4\u05D4 \u05E1\u05E4\u05E8');
@@ -1364,6 +1256,7 @@
       `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}</option>`
     ).join('');
     if ([...bulkColor.options].some(o => o.value === previousBulkColor)) bulkColor.value = previousBulkColor;
+    syncAllEnhancedSelects();
   }
 
   function updateBulkActions() {
@@ -1419,12 +1312,25 @@
     $('#resultsCount').textContent = hasMore
       ? `מוצגות ${displayed.length} מתוך ${filtered.length} · סך הכול ${allHighlights.length}`
       : `${filtered.length} מתוך ${allHighlights.length} הדגשות`;
-    $('#loadMoreBtn').hidden = !hasMore;
+    const loadMore = $('#loadMoreBtn');
+    loadMore.hidden = !hasMore;
+    loadMore.style.display = hasMore ? '' : 'none';
     updateBulkActions();
     if (!filtered.length) {
-      list.innerHTML = `<div class="empty-state">${allHighlights.length
-        ? '\u05D0\u05D9\u05DF \u05D4\u05D3\u05D2\u05E9\u05D5\u05EA \u05E9\u05DE\u05EA\u05D0\u05D9\u05DE\u05D5\u05EA \u05DC\u05E1\u05D9\u05E0\u05D5\u05DF \u05D4\u05E0\u05D5\u05DB\u05D7\u05D9.'
-        : '\u05E2\u05D3\u05D9\u05D9\u05DF \u05DC\u05D0 \u05E1\u05D9\u05DE\u05E0\u05EA \u05E9\u05D5\u05DD \u05D3\u05D1\u05E8.'}</div>`;
+      const emptyTitle = allHighlights.length ? 'לא נמצאו תוצאות' : 'המרקר מוכן';
+      const emptyMessage = allHighlights.length
+        ? 'אין הדגשות שמתאימות לסינון הנוכחי. אפשר לשנות את החיפוש או לאפס את המסננים.'
+        : 'סמנו טקסט בספר, לחצו לחיצה ימנית ובחרו צבע מתפריט מרקר.';
+      list.innerHTML = `<div class="empty-state">
+        <span class="empty-state-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M4 16.7 15.9 4.8a2.1 2.1 0 0 1 3 0l.3.3a2.1 2.1 0 0 1 0 3L7.3 20H4v-3.3Z" fill="currentColor"/>
+            <path d="M4 21h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".55"/>
+          </svg>
+        </span>
+        <strong>${emptyTitle}</strong>
+        <span>${emptyMessage}</span>
+      </div>`;
       return;
     }
     const cardHtml = h => {
@@ -1443,8 +1349,8 @@
       const favoriteBadge = h.favorite === true
         ? `<span class="favorite-badge" title="מועדפת" aria-label="מועדפת">★</span>`
         : '';
-      const colorOptions = settings.colors.map(option =>
-        `<option value="${escapeHtml(option.id)}"${option.id === h.colorId ? ' selected' : ''}>${escapeHtml(option.label)}</option>`
+      const colorMenu = settings.colors.map(option =>
+        `<button type="button" class="highlight-color-option${option.id === h.colorId ? ' is-selected' : ''}" data-action="change-color" data-key="${escapeHtml(h.key)}" data-color-id="${escapeHtml(option.id)}" role="option" aria-selected="${option.id === h.colorId}"><span class="option-color-swatch" style="--option-color:${escapeHtml(toSafeHex(option.hex))}"></span><span>${escapeHtml(option.label)}</span>${option.id === h.colorId ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>' : ''}</button>`
       ).join('');
       const accessibleLabel = `${title}. ${short || 'שורה מסומנת'}`;
       return `<article class="highlight-card fade-in"${staleAttr} data-key="${escapeHtml(h.key)}" tabindex="0" aria-label="${escapeHtml(accessibleLabel)}">
@@ -1463,10 +1369,13 @@
           <div class="highlight-meta">${escapeHtml(c.label)}${date ? ' \u00B7 ' + escapeHtml(date) : ''}</div>
         </div>
         <div class="row-actions">
-          <select class="inline-color" data-key="${escapeHtml(h.key)}" aria-label="שנה צבע עבור ${escapeHtml(title)}">${colorOptions}</select>
-          <button class="small-btn" type="button" data-action="open" data-key="${escapeHtml(h.key)}" aria-label="פתח: ${escapeHtml(title)}">\u05E4\u05EA\u05D7</button>
-          <button class="small-btn" type="button" data-action="edit" data-key="${escapeHtml(h.key)}" aria-label="ערוך: ${escapeHtml(title)}">ערוך</button>
-          <button class="small-btn danger-action" type="button" data-action="delete" data-key="${escapeHtml(h.key)}" aria-label="מחק: ${escapeHtml(title)}">\u05DE\u05D7\u05E7</button>
+          <details class="inline-color-picker">
+            <summary aria-label="שנה צבע עבור ${escapeHtml(title)}"><span class="option-color-swatch" style="--option-color:${escapeHtml(toSafeHex(c.hex))}"></span><span>${escapeHtml(c.label)}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg></summary>
+            <div class="highlight-color-menu" role="listbox" aria-label="צבע ההדגשה">${colorMenu}</div>
+          </details>
+          <button class="small-btn" type="button" data-action="open" data-key="${escapeHtml(h.key)}" aria-label="פתח: ${escapeHtml(title)}"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg><span>פתח</span></button>
+          <button class="small-btn" type="button" data-action="edit" data-key="${escapeHtml(h.key)}" aria-label="ערוך: ${escapeHtml(title)}"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 16 10.5-10.5a2.1 2.1 0 0 1 3 3L8 19H5v-3Z"/><path d="M4 21h16"/></svg><span>ערוך</span></button>
+          <button class="small-btn danger-action" type="button" data-action="delete" data-key="${escapeHtml(h.key)}" aria-label="מחק: ${escapeHtml(title)}"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 11v6M14 11v6M7 7l1 13h8l1-13M9 7l1-3h4l1 3"/></svg><span>\u05DE\u05D7\u05E7</span></button>
         </div>
       </article>`;
     };
@@ -1503,21 +1412,41 @@
       const badge = inMenuSlot
         ? ` <span class="menu-badge">\u05EA\u05E4\u05E8\u05D9\u05D8</span>`
         : (c.enabled ? ` <span class="menu-badge muted">\u05DE\u05D7\u05D5\u05E5 \u05DC\u05DE\u05D2\u05D1\u05DC\u05D4</span>` : '');
-      return `<div class="color-row" data-index="${i}" data-marker-mode="${escapeHtml(c.markerMode)}">
-        <span class="drag-handle" title="\u05D2\u05E8\u05D5\u05E8">\u2807</span>
-        <button type="button" class="color-picker-btn" data-action="pick" style="--picked-color:${escapeHtml(toSafeHex(c.hex))}" title="\u05D1\u05D7\u05E8 \u05E6\u05D1\u05E2"><span></span></button>
-        <input class="native-color" type="color" value="${escapeHtml(toSafeHex(c.hex))}" data-field="hex" aria-label="\u05E6\u05D1\u05E2" />
-        <input type="text" value="${escapeHtml(c.label)}" data-field="label" aria-label="\u05E9\u05DD \u05E6\u05D1\u05E2" />
-        <label class="color-switch-label" title="${c.enabled ? 'לחץ לכיבוי' : 'לחץ להפעלה'}">
-          <input type="checkbox" data-field="enabled" ${c.enabled ? 'checked' : ''} />פעיל${badge}
-        </label>
-        <div class="order-btns">
-          <button type="button" data-action="up"   ${i === 0 ? 'disabled' : ''} title="\u05D4\u05E2\u05DC\u05D4">\u25B2</button>
-          <button type="button" data-action="down" ${i === settings.colors.length - 1 ? 'disabled' : ''} title="\u05D4\u05D5\u05E8\u05D3">\u25BC</button>
+      const safeHex = escapeHtml(toSafeHex(c.hex));
+      const previewOpacity = Number.isFinite(Number(c.opacity)) ? Number(c.opacity) : .45;
+      const previewRadius = Number.isFinite(Number(c.borderRadius)) ? Number(c.borderRadius) : 4;
+      return `<div class="color-row" data-index="${i}" data-marker-mode="${escapeHtml(c.markerMode)}" style="--picked-color:${safeHex};--marker-preview-color:${hexToRgba(safeHex, previewOpacity)};--marker-radius:${previewRadius}px">
+        <div class="color-row-main">
+          <button type="button" class="drag-handle" title="שינוי סדר" aria-label="שינוי סדר של ${escapeHtml(c.label)}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.25"/><circle cx="15" cy="6" r="1.25"/><circle cx="9" cy="12" r="1.25"/><circle cx="15" cy="12" r="1.25"/><circle cx="9" cy="18" r="1.25"/><circle cx="15" cy="18" r="1.25"/></svg></button>
+          <details class="color-picker-details">
+            <summary class="color-picker-btn" title="בחירת גוון" aria-label="בחירת גוון עבור ${escapeHtml(c.label)}"><span class="color-swatch"></span><span class="color-picker-label">בחירת גוון</span><svg class="chevron-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg></summary>
+            <div class="color-picker-popover">
+              <span class="picker-popover-title">בחרו גוון</span>
+              <div class="preset-swatches" role="listbox" aria-label="גוונים מוכנים">${COLOR_PALETTE.map(([hex, name]) => `<button type="button" class="preset-swatch${toSafeHex(c.hex) === hex ? ' is-selected' : ''}" data-action="preset" data-hex="${hex}" title="${name}" aria-label="${name}" aria-selected="${toSafeHex(c.hex) === hex}" style="--swatch:${hex}"></button>`).join('')}</div>
+              <label class="hex-field">קוד HEX<div class="hex-input-row"><input type="text" value="${safeHex}" data-field="hex-display" inputmode="text" maxlength="7" spellcheck="false" /><button type="button" class="hex-picker-btn" data-action="browser-picker" title="פתיחת בוחר הצבעים של הדפדפן" aria-label="פתיחת בוחר הצבעים של הדפדפן"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 0 17h1.2a1.8 1.8 0 0 0 0-3.6h-.7a1.5 1.5 0 0 1 0-3h2.2A5.8 5.8 0 0 0 20.5 8 8.5 8.5 0 0 0 12 3.5Z"/><circle cx="8" cy="9" r="1"/><circle cx="11.5" cy="6.8" r="1"/><circle cx="15.5" cy="8" r="1"/></svg></button></div></label>
+              <button type="button" class="apply-hex-btn" data-action="apply-hex">החלת הגוון</button>
+            </div>
+          </details>
+        <input class="native-color" type="color" value="${safeHex}" data-field="hex" aria-label="\u05E6\u05D1\u05E2" tabindex="-1" />
+          <label class="color-name-field"><span>שם הצבע</span><input type="text" value="${escapeHtml(c.label)}" data-field="label" aria-label="\u05E9\u05DD \u05E6\u05D1\u05E2" /></label>
+          <div class="color-row-actions">
+            <label class="color-switch-label" title="${c.enabled ? 'לחץ לכיבוי' : 'לחץ להפעלה'}">
+              <input type="checkbox" data-field="enabled" ${c.enabled ? 'checked' : ''} />
+              <span class="color-switch-copy"><strong>${c.enabled ? 'פעיל' : 'כבוי'}</strong>${badge}</span>
+            </label>
+            <div class="order-btns">
+              <button type="button" data-action="up" ${i === 0 ? 'disabled' : ''} title="העבר למעלה" aria-label="העבר את ${escapeHtml(c.label)} למעלה"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 14 5-5 5 5"/></svg></button>
+              <button type="button" data-action="down" ${i === settings.colors.length - 1 ? 'disabled' : ''} title="העבר למטה" aria-label="העבר את ${escapeHtml(c.label)} למטה"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
+            </div>
+            <button class="color-icon-btn danger-action" type="button" data-action="remove" ${settings.colors.length <= 1 ? 'disabled' : ''} title="מחק צבע" aria-label="מחק את ${escapeHtml(c.label)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 11v6M14 11v6M7 7l1 13h8l1-13M9 7l1-3h4l1 3"/></svg></button>
+          </div>
         </div>
-        <button class="small-btn danger-action" type="button" data-action="remove" ${settings.colors.length <= 1 ? 'disabled' : ''}>\u05DE\u05D7\u05E7</button>
+        <div class="color-preview" aria-label="תצוגה מקדימה של ${escapeHtml(c.label)}">
+          <span class="color-preview-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>תצוגה מקדימה</span>
+          <span class="marker-preview">טקסט מסומן לדוגמה</span>
+        </div>
         <details class="color-style-editor">
-          <summary>סגנון הדגשה</summary>
+          <summary><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>עריכת סגנון ההדגשה</span><small>סוג סימון, שקיפות ועיגול פינות</small></summary>
           <div class="color-style-grid">
             <label>אופן הסימון
               <select data-field="markerMode">
@@ -1567,6 +1496,8 @@
     if (managedTags.includes(previousTag)) tagSource.value = previousTag;
     updateRangeOutputs();
     applyDisplaySettings();
+    enhanceSelects(editor);
+    syncAllEnhancedSelects();
 
     initDragDrop();
   }
@@ -1608,7 +1539,7 @@
           await renderHighlightList();
         }
       } catch (error) {
-        console.warn('Highlight list refresh failed', error);
+        logger.warn('Highlight list refresh failed', error);
       } finally {
         uiRefreshInFlight = false;
       }
@@ -1720,7 +1651,7 @@
       const nextTags = normalizeTags(item.tags).flatMap(tag => tag === source ? (action === 'delete' ? [] : [target]) : [tag]);
       try {
         await updateHighlightColor(item, getColorById(item.colorId), { render: false, tags: nextTags });
-      } catch (error) { failed++; console.error('Global tag update failed', item.highlightId, error); }
+      } catch (error) { failed++; logger.error('Global tag update failed', item.highlightId, error); }
     }
     $('#manageTagTarget').value = '';
     await renderHighlightList();
@@ -1772,7 +1703,7 @@
     return {
       format: 'otzaria-marker-backup',
       schemaVersion: 1,
-      pluginVersion: '1.13.6',
+      pluginVersion: PLUGIN_VERSION,
       exportedAt: new Date().toISOString(),
       settings: normalizeSettings(settings),
       highlights: highlights.map(({ key, ...item }) => item)
@@ -1840,7 +1771,7 @@
       throw new Error('\u05DB\u05DE\u05D5\u05EA \u05D4\u05D4\u05D3\u05D2\u05E9\u05D5\u05EA \u05D1\u05E7\u05D5\u05D1\u05E5 \u05D0\u05D9\u05E0\u05D4 \u05EA\u05E7\u05D9\u05E0\u05D4');
     }
     const highlights = raw.highlights.filter(item =>
-      item && typeof item.highlightId === 'string' && item.highlightId.length <= 128 &&
+      item && isSafeHighlightId(item.highlightId) &&
       typeof item.bookId === 'string' && Number.isInteger(item.sectionIndex) &&
       item.sectionIndex >= 0 && rangeBounds(item.sourceRange)
     ).map(item => ({
@@ -1916,7 +1847,7 @@
         $('#backupFileInput').click();
         return;
       }
-      console.error('Backup import failed', error);
+      logger.error('Backup import failed', error);
       await call('ui.showError', { message: `\u05D9\u05D9\u05D1\u05D5\u05D0 \u05D4\u05D2\u05D9\u05D1\u05D5\u05D9 \u05E0\u05DB\u05E9\u05DC: ${error?.message || error}` }).catch(() => {});
     } finally {
       if (token) await call('fs.revokeFile', { token }).catch(() => {});
@@ -1973,7 +1904,7 @@
         : `הייבוא הושלם · ${preview.added.length} חדשות · ${preview.updated.length} עודכנו · ${preview.identical.length} כפילויות דולגו`;
       await call('ui.showSuccess', { message: summary });
     } catch (error) {
-      console.error('Backup import failed', error);
+      logger.error('Backup import failed', error);
       let rolledBack = false;
       if (mutationStarted && rollback) {
         try {
@@ -1993,7 +1924,7 @@
           await renderHighlightList();
           rolledBack = true;
         } catch (rollbackError) {
-          console.error('Backup import rollback failed', rollbackError);
+          logger.error('Backup import rollback failed', rollbackError);
         }
       }
       const suffix = rolledBack ? ' השינויים בוטלו והמצב הקודם שוחזר.' : '';
@@ -2013,16 +1944,77 @@
     updateBulkActions();
   }
 
+  function updateNewColorPreview() {
+    const hex = toSafeHex($('#newColorHex')?.value);
+    const opacity = Number($('#newColorOpacity')?.value || .45);
+    const radius = Number($('#newColorRadius')?.value || 4);
+    const mode = $('#newColorMarkerMode')?.value || 'text-background';
+    const preview = $('#newColorPreview');
+    if (!preview) return;
+    preview.style.setProperty('--new-color', hex);
+    preview.style.setProperty('--new-color-rgba', hexToRgba(hex, opacity));
+    preview.style.setProperty('--new-color-radius', `${radius}px`);
+    preview.dataset.markerMode = mode;
+    const output = $('#newColorOpacityOutput');
+    if (output) output.textContent = `${Math.round(opacity * 100)}%`;
+    $('#newColorRadiusField')?.toggleAttribute('hidden', !['text-background', 'box'].includes(mode));
+  }
+
+  function openAddColorDialog() {
+    const dialog = $('#addColorDialog');
+    if (!dialog) return;
+    $('#newColorLabel').value = 'גוון חדש';
+    $('#newColorPicker').value = '#D8B4E2';
+    $('#newColorHex').value = '#D8B4E2';
+    $('#newColorMarkerMode').value = 'text-background';
+    $('#newColorOpacity').value = '0.45';
+    $('#newColorRadius').value = '4';
+    syncEnhancedSelect($('#newColorMarkerMode'));
+    updateNewColorPreview();
+    if (!dialog.open) dialog.showModal();
+    requestAnimationFrame(() => $('#newColorLabel')?.focus());
+  }
+
   function bindUi() {
     if (uiBound) return;
     uiBound = true;
+    enhanceSelects(document);
+
+    document.addEventListener('click', e => {
+      const option = e.target.closest('.otz-select-option');
+      if (option) {
+        const shell = option.closest('.otz-select');
+        const select = shell?.previousElementSibling;
+        if (!select?.matches?.('select')) return;
+        select.value = option.dataset.selectValue;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        syncEnhancedSelect(select);
+        shell.open = false;
+        return;
+      }
+      const trigger = e.target.closest('.otz-select-trigger');
+      if (trigger) {
+        const current = trigger.closest('.otz-select');
+        $$('.otz-select[open]').forEach(menu => { if (menu !== current) menu.open = false; });
+        return;
+      }
+      $$('.otz-select[open]').forEach(menu => {
+        if (!menu.contains(e.target)) menu.open = false;
+      });
+    });
+    document.addEventListener('change', e => {
+      if (e.target.matches('select[data-otz-enhanced="true"]')) syncEnhancedSelect(e.target);
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') $$('.otz-select[open]').forEach(menu => { menu.open = false; });
+    });
 
     $$('.tab').forEach(btn => btn.addEventListener('click', async () => {
       $$('.tab').forEach(b => b.classList.toggle('active', b === btn));
       $$('.tab-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === btn.dataset.tab));
-      if (btn.dataset.tab === 'highlights') renderHighlightList().catch(console.warn);
+      if (btn.dataset.tab === 'highlights') renderHighlightList().catch(logger.warn);
       if (btn.dataset.tab === 'colors' || btn.dataset.tab === 'settings') {
-        await loadAllHighlights().catch(console.warn);
+        await loadAllHighlights().catch(logger.warn);
         renderSettings();
       }
     }));
@@ -2036,7 +2028,7 @@
     $('#groupHighlights').addEventListener('change', resetListWindowAndRender);
     $('#highlightSearch').addEventListener('input', () => {
       clearTimeout(searchRenderTimer);
-      searchRenderTimer = setTimeout(() => resetListWindowAndRender().catch(console.warn), 180);
+      searchRenderTimer = setTimeout(() => resetListWindowAndRender().catch(logger.warn), 180);
     });
     $('#resetFiltersBtn').addEventListener('click', () => {
       $('#highlightSearch').value = '';
@@ -2046,7 +2038,7 @@
       $('#statusFilter').value = 'all';
       $('#sortHighlights').value = 'newest';
       $('#groupHighlights').value = 'none';
-      resetListWindowAndRender().catch(console.warn);
+      resetListWindowAndRender().catch(logger.warn);
     });
     $('#selectVisibleBtn').addEventListener('click', () => {
       selectVisibleHighlights();
@@ -2058,7 +2050,7 @@
     });
     $('#loadMoreBtn').addEventListener('click', () => {
       renderedHighlightLimit += HIGHLIGHTS_PAGE_SIZE;
-      renderHighlightList().catch(console.warn);
+      renderHighlightList().catch(logger.warn);
     });
     $('#applyBulkColorBtn').addEventListener('click', applyColorToSelected);
     $('#applyBulkTagsBtn').addEventListener('click', addTagsToSelected);
@@ -2087,7 +2079,7 @@
       try {
         await saveEditedHighlight();
       } catch (err) {
-        console.error('Failed editing highlight', err);
+        logger.error('Failed editing highlight', err);
         await call('ui.showError', { message: highlightUpdateErrorMessage(err) }).catch(() => {});
       } finally {
         if (submit) submit.disabled = false;
@@ -2101,20 +2093,22 @@
         updateBulkActions();
         return;
       }
-      if (e.target.matches('.inline-color')) {
-        const item = allHighlights.find(h => h.key === e.target.dataset.key);
-        const color = settings.colors.find(c => c.id === e.target.value);
+    });
+    $('#highlightsList').addEventListener('click', async e => {
+      const button = e.target.closest('button[data-action="change-color"]');
+      if (!button) return;
+      const item = allHighlights.find(h => h.key === button.dataset.key);
+      const color = settings.colors.find(c => c.id === button.dataset.colorId);
         if (!item || !color || color.id === item.colorId) return;
-        e.target.disabled = true;
+      button.disabled = true;
         try {
           await updateHighlightColor(item, color);
           await call('ui.showSuccess', { message: `הצבע שונה ל${color.label}` }).catch(() => {});
         } catch (err) {
-          console.error('Failed updating highlight color', err);
+          logger.error('Failed updating highlight color', err);
           await call('ui.showError', { message: highlightUpdateErrorMessage(err) }).catch(() => {});
           await renderHighlightList();
         }
-      }
     });
 
     $('#highlightsList').addEventListener('keydown', e => {
@@ -2148,7 +2142,7 @@
         selectVisibleHighlights();
       } else if (e.key === 'Delete' && selectedHighlightKeys.size) {
         e.preventDefault();
-        deleteSelectedHighlights().catch(console.error);
+        deleteSelectedHighlights().catch(logger.error);
       } else if (e.key === 'Escape' && selectedHighlightKeys.size) {
         e.preventDefault();
         selectedHighlightKeys.clear();
@@ -2166,7 +2160,7 @@
         try {
           await openHighlight(item);
         } catch (err) {
-          console.error('Failed opening highlight', err);
+          logger.error('Failed opening highlight', err);
           await call('ui.showMessage', {
             message: `\u05DC\u05D0 \u05D4\u05E6\u05DC\u05D7\u05E0\u05D5 \u05DC\u05E4\u05EA\u05D5\u05D7 \u05D0\u05EA \u05D4\u05E1\u05D9\u05DE\u05D5\u05DF: ${err?.message || err}`
           }).catch(() => {});
@@ -2182,9 +2176,38 @@
       settings = collectColorSettingsFromForm();
       const row = btn.closest('.color-row');
       const i   = Number(row.dataset.index);
-      if (btn.dataset.action === 'pick') {
-        const inp = row.querySelector('input[type="color"]');
-        if (inp?.showPicker) inp.showPicker(); else inp?.click();
+      if (btn.dataset.action === 'preset') {
+        const hex = toSafeHex(btn.dataset.hex);
+        row.querySelector('[data-field="hex"]').value = hex;
+        row.querySelector('[data-field="hex-display"]').value = hex;
+        row.style.setProperty('--picked-color', hex);
+        row.style.setProperty('--marker-preview-color', hexToRgba(hex, Number(row.querySelector('[data-field="opacity"]')?.value) || .45));
+        settings = collectColorSettingsFromForm();
+        scheduleAutoSave(settings, 'colorsAutoSaveStatus', 150);
+        return;
+      }
+      if (btn.dataset.action === 'browser-picker') {
+        const input = row.querySelector('input[type="color"]');
+        if (input?.showPicker) input.showPicker();
+        else input?.click();
+        return;
+      }
+      if (btn.dataset.action === 'apply-hex') {
+        const display = row.querySelector('[data-field="hex-display"]');
+        const rawHex = String(display?.value || '').trim();
+        if (!/^#[0-9A-F]{6}$/i.test(rawHex)) {
+          display?.setCustomValidity('יש להזין קוד HEX תקין, לדוגמה #B7DDBB');
+          display?.reportValidity();
+          return;
+        }
+        const hex = rawHex.toUpperCase();
+        display.setCustomValidity('');
+        row.querySelector('[data-field="hex"]').value = hex;
+        display.value = hex;
+        row.style.setProperty('--picked-color', hex);
+        row.style.setProperty('--marker-preview-color', hexToRgba(hex, Number(row.querySelector('[data-field="opacity"]')?.value) || .45));
+        settings = collectColorSettingsFromForm();
+        scheduleAutoSave(settings, 'colorsAutoSaveStatus', 150);
         return;
       }
       if (btn.dataset.action === 'remove') {
@@ -2201,11 +2224,29 @@
     $('#colorsEditor').addEventListener('input', e => {
       if (e.target.matches('input[type="color"]')) {
         const row = e.target.closest('.color-row');
-        row?.querySelector('.color-picker-btn')?.style.setProperty('--picked-color', e.target.value);
+        row?.style.setProperty('--picked-color', e.target.value);
+        row?.style.setProperty('--marker-preview-color', hexToRgba(e.target.value, Number(row.querySelector('[data-field="opacity"]')?.value) || .45));
+        const hexDisplay = row?.querySelector('[data-field="hex-display"]');
+        if (hexDisplay) hexDisplay.value = e.target.value.toUpperCase();
       }
       if (e.target.matches('[data-field="opacity"]')) {
+        const row = e.target.closest('.color-row');
+        row?.style.setProperty('--marker-preview-color', hexToRgba(row.querySelector('[data-field="hex"]')?.value, Number(e.target.value)));
         const output = e.target.closest('label')?.querySelector('output');
         if (output) output.textContent = `${Math.round(Number(e.target.value) * 100)}%`;
+      }
+      if (e.target.matches('[data-field="hex-display"]')) {
+        const value = e.target.value.trim();
+        if (/^#[0-9A-F]{6}$/i.test(value)) {
+          const hiddenColor = e.target.closest('.color-row')?.querySelector('[data-field="hex"]');
+          if (hiddenColor) hiddenColor.value = value;
+          const row = e.target.closest('.color-row');
+          row?.style.setProperty('--picked-color', value);
+          row?.style.setProperty('--marker-preview-color', hexToRgba(value, Number(row.querySelector('[data-field="opacity"]')?.value) || .45));
+        }
+      }
+      if (e.target.matches('[data-field="borderRadius"]')) {
+        e.target.closest('.color-row')?.style.setProperty('--marker-radius', `${e.target.value}px`);
       }
       settings = collectColorSettingsFromForm();
       scheduleAutoSave(settings, 'colorsAutoSaveStatus');
@@ -2221,6 +2262,8 @@
         const activeCount = tempSettings.colors.filter(c => c.enabled).length;
         if (activeCount > MAX_MENU_COLORS) {
           e.target.checked = false;
+          settings = collectColorSettingsFromForm();
+          renderSettings();
           call('ui.showMessage', {
             message: `ניתן להפעיל עד ${MAX_MENU_COLORS} צבעים בו-זמנית (${MAX_MENU_COLORS} הראשונים מופיעים בתפריט)`
           }).catch(() => {});
@@ -2229,16 +2272,60 @@
       }
       settings = collectColorSettingsFromForm();
       scheduleAutoSave(settings, 'colorsAutoSaveStatus', 150);
+      if (e.target.matches('[data-field="enabled"]')) renderSettings();
     });
 
-    $('#addColorBtn').addEventListener('click', () => {
+    $('#addColorBtn').addEventListener('click', openAddColorDialog);
+    $('#closeAddColorDialogBtn').addEventListener('click', () => $('#addColorDialog').close());
+    $('#cancelAddColorBtn').addEventListener('click', () => $('#addColorDialog').close());
+    $('#newColorPicker').addEventListener('input', e => {
+      $('#newColorHex').value = e.target.value.toUpperCase();
+      updateNewColorPreview();
+    });
+    $('#newColorHex').addEventListener('input', e => {
+      const value = e.target.value.trim();
+      if (/^#[0-9A-F]{6}$/i.test(value)) {
+        $('#newColorPicker').value = value;
+        e.target.setCustomValidity('');
+        updateNewColorPreview();
+      }
+    });
+    $('#newColorMarkerMode').addEventListener('change', updateNewColorPreview);
+    $('#newColorOpacity').addEventListener('input', updateNewColorPreview);
+    $('#newColorRadius').addEventListener('input', updateNewColorPreview);
+    $('#addColorForm').addEventListener('submit', async e => {
+      e.preventDefault();
       settings = collectColorSettingsFromForm();
-      if (settings.colors.length >= MAX_COLORS) return;
-      settings.colors.push({ id: `custom-${Date.now()}`, hex: '#E1BEE7', label: '\u05D2\u05D5\u05D5\u05DF \u05D7\u05D3\u05E9', enabled: true });
-      renderSettings();
-      scheduleAutoSave(settings, 'colorsAutoSaveStatus', 100);
-      const inp = $('.color-row:last-child input[type="color"]');
-      if (inp?.showPicker) inp.showPicker(); else inp?.click();
+      if (settings.colors.length >= MAX_COLORS) {
+        await call('ui.showMessage', { message: `ניתן להוסיף עד ${MAX_COLORS} צבעים.` }).catch(() => {});
+        return;
+      }
+      const rawHex = $('#newColorHex').value.trim();
+      if (!/^#[0-9A-F]{6}$/i.test(rawHex)) {
+        $('#newColorHex').setCustomValidity('יש להזין קוד HEX תקין, לדוגמה #D8B4E2');
+        $('#newColorHex').reportValidity();
+        return;
+      }
+      const label = $('#newColorLabel').value.trim();
+      if (!label) {
+        $('#newColorLabel').setCustomValidity('יש לתת שם לצבע');
+        $('#newColorLabel').reportValidity();
+        return;
+      }
+      $('#newColorLabel').setCustomValidity('');
+      settings.colors.push({
+        id: `custom-${Date.now()}`,
+        hex: rawHex.toUpperCase(),
+        label,
+        enabled: enabledColors().length < MAX_MENU_COLORS,
+        markerMode: $('#newColorMarkerMode').value,
+        opacity: Number($('#newColorOpacity').value),
+        borderRadius: Number($('#newColorRadius').value)
+      });
+      settings = normalizeSettings(settings);
+      $('#addColorDialog').close();
+      await saveSettings(settings);
+      await call('ui.showSuccess', { message: `הצבע "${label}" נוסף` }).catch(() => {});
     });
 
     $('#resetColorsBtn').addEventListener('click', async () => {
@@ -2251,8 +2338,8 @@
         colors: structuredCloneSafe(DEFAULT_SETTINGS.colors),
         defaultColorId: DEFAULT_SETTINGS.defaultColorId
       }));
-      renderSettings();
-      scheduleAutoSave(settings, 'colorsAutoSaveStatus', 100);
+      await saveSettings(settings);
+      await call('ui.showSuccess', { message: 'הצבעים אופסו לברירת המחדל' }).catch(() => {});
     });
 
     $('#colorsForm').addEventListener('submit', async e => {
@@ -2278,14 +2365,14 @@
       scheduleAutoSave(collectPreferencesFromForm(), 'preferencesAutoSaveStatus', 0);
     });
 
-    $('#resetPreferencesBtn').addEventListener('click', () => {
+    $('#resetPreferencesBtn').addEventListener('click', async () => {
       settings = normalizeSettings(Object.assign({}, settings, {
         menuStyle: DEFAULT_SETTINGS.menuStyle,
         appearance: structuredCloneSafe(DEFAULT_SETTINGS.appearance)
       }));
-      renderSettings();
+      await saveSettings(settings);
       applyDisplaySettings();
-      scheduleAutoSave(settings, 'preferencesAutoSaveStatus', 100);
+      await call('ui.showSuccess', { message: 'התצוגה אופסה לברירת המחדל' }).catch(() => {});
     });
 
     $('#renameTagBtn').addEventListener('click', () => transformGlobalTag('rename'));
@@ -2294,7 +2381,7 @@
     $('#exportVisibleHumanBtn').addEventListener('click', async () => {
       try { await exportVisibleHumanReadable(); }
       catch (error) {
-        console.error('Human-readable export failed', error);
+        logger.error('Human-readable export failed', error);
         await call('ui.showError', { message: 'ייצוא ההדגשות נכשל' }).catch(() => {});
       }
     });
@@ -2303,7 +2390,7 @@
       try {
         await exportBackup();
       } catch (error) {
-        console.error('Backup export failed', error);
+        logger.error('Backup export failed', error);
         await call('ui.showError', { message: '\u05D9\u05D9\u05E6\u05D5\u05D0 \u05D4\u05D2\u05D9\u05D1\u05D5\u05D9 \u05E0\u05DB\u05E9\u05DC' }).catch(() => {});
       }
     });
@@ -2321,12 +2408,16 @@
   }
 
   // ── Boot & lifecycle ───────────────────────────────────────────────────────
-  Otzaria.on('plugin.boot', async payload => {
+  const on = (eventName, handler) => Otzaria.on(eventName, protectEvent(eventName, handler, logger));
+
+  on('plugin.boot', async payload => {
     try {
-      runMode = payload?.app?.runMode === 'background' ? 'background' : 'foreground';
-      runtimeOwner = runMode === 'background' || !hasStartupPermission(payload?.permissions);
+      hostContext = normalizeBootContext(payload);
+      runMode = hostContext.runMode;
+      runtimeOwner = ownsLegacyRuntime(hostContext, payload?.permissions);
       await loadSettings();
       if (isForeground()) {
+        applyHostMetadata(hostContext);
         applyTheme(payload.theme);
         bindUi();
         renderSettings();
@@ -2340,22 +2431,22 @@
         reapplyAllHighlights()
           .then(() => syncStaleHighlights())
           .then(() => renderHighlightList())
-          .catch(console.warn);
+          .catch(logger.warn);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { logger.error(err); }
   });
 
-  Otzaria.on('theme.changed', theme => {
+  on('theme.changed', theme => {
     if (isForeground()) {
       applyTheme(theme);
       applyDisplaySettings();
     }
   });
 
-  Otzaria.on('plugin.permissions_changed', async data => {
+  on('plugin.permissions_changed', async data => {
     if (!isForeground()) return;
     const wasOwner = runtimeOwner;
-    const willOwnRuntime = !hasStartupPermission(data?.permissions);
+    const willOwnRuntime = ownsLegacyRuntime(hostContext, data?.permissions);
     if (wasOwner && !willOwnRuntime) {
       await unregisterContextMenuItems();
     }
@@ -2368,7 +2459,7 @@
   });
 
   // Selection: remember + show menu
-  Otzaria.on('reader.selection_changed', async data => {
+  on('reader.selection_changed', async data => {
     if (!runtimeOwner) return;
     if (!hasUsableSelection(data)) {
       selectionRevision++;
@@ -2395,15 +2486,15 @@
   const _suspended = 'plugin.suspended';
   const _resumed   = 'plugin.resumed';
 
-  Otzaria.on(_cmColor, data => {
+  on(_cmColor, data => {
     if (runtimeOwner) return onColorClicked(data);
   });
-  Otzaria.on(_cmItem, data => {
+  on(_cmItem, data => {
     if (runtimeOwner) return onStandardMenuClick(data);
   });
 
   // Source content changed: re-anchor highlights for affected sections
-  Otzaria.on('reader.sectionContentChanged', async change => {
+  on('reader.sectionContentChanged', async change => {
     if (!runtimeOwner) return;
     if (!change || change.changeType !== 'source-content') return;
     const bookId       = change.bookId;
@@ -2419,7 +2510,7 @@
     await renderHighlightList();
   });
 
-  Otzaria.on('reader.current_ref_changed', async () => {
+  on('reader.current_ref_changed', async () => {
     if (!runtimeOwner) return;
     selectionRevision++;
     lastSelection = null;
@@ -2428,7 +2519,7 @@
     await unregisterContextMenuItems();
   });
 
-  Otzaria.on('navigation.changed', async () => {
+  on('navigation.changed', async () => {
     if (!runtimeOwner) return;
     selectionRevision++;
     lastSelection  = null;
@@ -2436,7 +2527,7 @@
     await unregisterContextMenuItems();
   });
 
-  Otzaria.on(_suspended, () => {
+  on(_suspended, () => {
     if (isForeground()) {
       stopUiRefresh();
       return;
@@ -2447,9 +2538,9 @@
     savedSelection = null;
   });
 
-  Otzaria.on(_resumed, () => {
+  on(_resumed, () => {
     if (isForeground()) {
-      renderHighlightList().catch(console.warn);
+      renderHighlightList().catch(logger.warn);
       startUiRefresh();
       return;
     }

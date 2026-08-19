@@ -1,5 +1,14 @@
 # גופנים — מוזרקים אוטומטית על ידי אוצריא, אין צורך בקובץ ה-.otzplugin
 fonts/
 
+# Development and release metadata; not needed at runtime.
+.github/
+docs/
+test/
+screenshots/
+README.md
+CONTRIBUTING.md
+AGENTS.md
+
 # קובץ טיפוסים לפיתוח בלבד
 otzaria_plugin.d.ts

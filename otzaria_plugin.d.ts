@@ -119,8 +119,11 @@ export interface BootPayload {
     platform: 'windows' | 'linux' | 'macos' | 'android' | 'ios' | string;
     locale: string;
     textDirection: 'ltr' | 'rtl';
+    runMode?: 'foreground' | 'background';
   };
   theme: ThemePayload;
+  /** Connectivity as known at boot. Values can be null until the first check resolves. */
+  connectivity: ConnectivityStatus;
   /** Currently granted permissions at boot time.
    *  For a fresh runtime snapshot, call `app.getGrantedPermissions()` or
    *  listen to `plugin.permissions_changed`. */
@@ -129,6 +132,13 @@ export interface BootPayload {
 
 export interface PermissionSnapshot {
   permissions: string[];
+}
+
+/** Result of `app.getConnectivity` and the `connectivity` field in `plugin.boot`. */
+export interface ConnectivityStatus {
+  isOfflineMode: boolean;
+  hasNetwork: boolean | null;
+  isOnline: boolean | null;
 }
 
 export interface BookMeta {
@@ -252,6 +262,118 @@ export interface TextRangeAnchor {
   startWordIndex?: number;
   endWordIndex?: number;
   normalizationProfile?: 'strict' | 'display' | 'search' | 'lenient';
+}
+
+export type NormalizationProfileName =
+  | 'strict'
+  | 'display'
+  | 'search'
+  | 'lenient';
+
+export interface NormalizeOptions {
+  profile: NormalizationProfileName;
+  overrides?: {
+    ignoreNikud?: boolean;
+    ignoreTeamim?: boolean;
+    ignorePunctuation?: boolean;
+    normalizeWhitespace?: boolean;
+    normalizeFinalLetters?: boolean;
+  };
+}
+
+export interface FindTextOccurrencesArgs {
+  bookId: string;
+  sectionIndex: number;
+  query: string;
+  layer?: 'source' | 'rendered';
+  normalize?: NormalizeOptions;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface TextOccurrence {
+  occurrenceId: string;
+  bookId: string;
+  sectionIndex: number;
+  currentRef: string | null;
+  layer: 'source' | 'rendered';
+  text: string;
+  normalizedText: string;
+  range: TextRangeAnchor;
+}
+
+export interface FindTextOccurrencesResult {
+  schemaVersion: 1;
+  results: TextOccurrence[];
+  hasMore: boolean;
+  nextCursor?: string;
+  totalCount: number;
+}
+
+export interface TextSourceMapSegment {
+  sourceStart: TextOffset;
+  sourceEnd: TextOffset;
+  renderedStart: TextOffset;
+  renderedEnd: TextOffset;
+  kind: 'identity' | 'substitution' | 'hidden' | 'inserted';
+  description?: string;
+}
+
+export interface TextSourceMap {
+  schemaVersion: 1;
+  bookId: string;
+  sectionIndex: number;
+  sourceTextHash: string;
+  renderedTextHash: string;
+  mappings: TextSourceMapSegment[];
+}
+
+export interface GetSectionTextMapArgs {
+  bookId: string;
+  sectionIndex: number;
+  layer?: 'source' | 'rendered' | 'both';
+  includeWords?: boolean;
+  includeChars?: boolean;
+  includeSourceMap?: boolean;
+  normalize?: NormalizeOptions;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface WordToken {
+  wordIndex: number;
+  layer: 'source' | 'rendered';
+  text: string;
+  normalizedText: string;
+  start: TextOffset;
+  end: TextOffset;
+  sourceRange?: TextRangeAnchor;
+  renderedRange?: TextRangeAnchor;
+}
+
+export interface CharToken {
+  charIndex: number;
+  layer: 'source' | 'rendered';
+  text: string;
+  normalizedText: string;
+  start: TextOffset;
+  end: TextOffset;
+}
+
+export interface SectionTextMapResult {
+  schemaVersion: 1;
+  bookId: string;
+  sectionIndex: number;
+  currentRef: string | null;
+  sourceText?: string;
+  renderedText?: string;
+  sourceTextHash?: string;
+  renderedTextHash?: string;
+  sourceMap?: TextSourceMap;
+  words?: WordToken[];
+  chars?: CharToken[];
+  hasMore: boolean;
+  nextCursor?: string;
 }
 
 export interface HighlightStyle {
@@ -436,7 +558,11 @@ export interface OtzariaEventMap {
   /** Fired once after the SDK is ready, carries full boot context. */
   'plugin.boot': BootPayload;
   /** Fired once after boot. No payload. */
-  'plugin.ready': undefined;
+  'plugin.ready': null;
+  /** Foreground WebView was paused because the user navigated away. */
+  'plugin.suspended': null;
+  /** Foreground WebView was resumed after navigation back. */
+  'plugin.resumed': null;
   /** Theme / dark-mode changed. */
   'theme.changed': ThemePayload;
   /** Top-level screen navigation changed. */
@@ -632,6 +758,12 @@ export type OtzariaMethod =
   | 'reader.getCurrentState'
   | 'reader.getCurrentRef'
   | 'reader.getSelection'
+  | 'reader.findTextOccurrences'
+  | 'reader.getSectionTextMap'
+  | 'fs.pickUserFile'
+  | 'fs.resolveFileUrl'
+  | 'fs.readTextFile'
+  | 'fs.revokeFile'
   | 'navigation.goTo'
   | 'notes.list'
   | 'notes.getBookNotesSummary'

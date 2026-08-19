@@ -3,37 +3,68 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>מרקר</title>
+  <title>תוסף מרקר לאוצריא</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
   <main class="app-shell">
-    <header class="app-header">
-      <button id="refreshBtn" class="icon-btn header-refresh" type="button" title="רענן" aria-label="רענן">↻</button>
+    <header class="app-header topbar">
+      <button id="refreshBtn" class="icon-btn header-refresh" type="button" title="רענן" aria-label="רענן">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M20 11a8 8 0 1 0-2.34 5.66" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M20 5v6h-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none">
-            <path d="M4 16.7 15.9 4.8a2.1 2.1 0 0 1 3 0l.3.3a2.1 2.1 0 0 1 0 3L7.3 20H4v-3.3Z" fill="currentColor"/>
-            <path d="M13.8 6.9 17.1 10.2" stroke="var(--color-on-primary)" stroke-width="1.7" stroke-linecap="round"/>
-            <path d="M4 21h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".55"/>
-          </svg>
+        <span class="brand-copy">
+          <h1>תוסף מרקר לאוצריא</h1>
         </span>
-        <h1>מרקר</h1>
-        <p>סימון שורות וניהול הדגשות באוצריא</p>
       </div>
       <span class="header-spacer" aria-hidden="true"></span>
     </header>
 
+    <div class="app-content">
+    <section class="plugin-intro" aria-labelledby="pluginIntroTitle">
+      <span class="intro-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <path d="M4 16.7 15.9 4.8a2.1 2.1 0 0 1 3 0l.3.3a2.1 2.1 0 0 1 0 3L7.3 20H4v-3.3Z" fill="currentColor"/>
+          <path d="M13.8 6.9 17.1 10.2" stroke="var(--color-on-primary)" stroke-width="1.7" stroke-linecap="round"/>
+          <path d="M4 21h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".55"/>
+        </svg>
+      </span>
+      <div class="intro-copy">
+        <h2 id="pluginIntroTitle">תוסף מרקר לאוצריא</h2>
+        <p>הדגשת וסימון טקסט וניהול הסימונים וההדגשות באוצריא</p>
+      </div>
+      <span class="intro-palette" aria-hidden="true">
+        <i></i><i></i><i></i><i></i>
+      </span>
+    </section>
     <nav class="tabs" aria-label="לשוניות">
-      <button class="tab active" type="button" data-tab="highlights">הדגשות</button>
-      <button class="tab" type="button" data-tab="colors">ניהול צבעים</button>
-      <button class="tab" type="button" data-tab="settings">הגדרות</button>
+      <button class="tab active" type="button" data-tab="highlights">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 6.5h14M5 12h10M5 17.5h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M17.5 15.5 20 18l-2.5 2.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>הדגשות</span>
+      </button>
+      <button class="tab" type="button" data-tab="colors">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 0 17h1.2a1.8 1.8 0 0 0 0-3.6h-.7a1.5 1.5 0 0 1 0-3h2.2A5.8 5.8 0 0 0 20.5 8 8.5 8.5 0 0 0 12 3.5Z" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="9" r="1" fill="currentColor"/><circle cx="11.5" cy="6.8" r="1" fill="currentColor"/><circle cx="15.5" cy="8" r="1" fill="currentColor"/></svg>
+        <span>ניהול צבעים</span>
+      </button>
+      <button class="tab" type="button" data-tab="settings">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9.5 4.5h5l.6 2.1 1.8 1 2.1-.6 2.5 4.3-1.5 1.6v2.1l1.5 1.6-2.5 4.3-2.1-.6-1.8 1-.6 2.1h-5l-.6-2.1-1.8-1-2.1.6-2.5-4.3L4 15v-2.1l-1.5-1.6L5 7l2.1.6 1.8-1 .6-2.1Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/><circle cx="12" cy="14" r="2.5" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>הגדרות</span>
+      </button>
     </nav>
 
     <section id="highlightsTab" class="tab-panel active" data-panel="highlights">
       <div class="panel-toolbar">
         <div class="highlights-toolbar-heading">
+          <span class="section-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 6h14M5 12h14M5 18h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="18" cy="18" r="2" fill="currentColor"/></svg></span>
           <div><h2>רשימת ההדגשות</h2><p>חיפוש, סינון וארגון ההדגשות</p></div>
+        </div>
+        <div class="workflow-guide" role="note">
+          <span><strong>1.</strong> חפשו או סננו</span>
+          <span><strong>2.</strong> פתחו, ערכו או שנו צבע</span>
+          <span><strong>3.</strong> בחרו כמה הדגשות לפעולות מרוכזות</span>
         </div>
         <div class="filters">
           <label class="search-filter">חיפוש
@@ -77,10 +108,10 @@
         </div>
         <div class="toolbar-actions">
           <span id="resultsCount" class="results-count" aria-live="polite"></span>
-          <button id="selectVisibleBtn" class="secondary-btn" type="button" aria-keyshortcuts="Control+A Meta+A" title="בחר את תוצאות הסינון (Ctrl+A)">בחר מוצגות</button>
-          <button id="selectAllBtn" class="secondary-btn" type="button">בחר הכול</button>
-          <button id="resetFiltersBtn" class="secondary-btn" type="button">איפוס סינון</button>
-          <button id="clearAllBtn" class="danger-btn" type="button">נקה הכל</button>
+          <button id="selectVisibleBtn" class="secondary-btn" type="button" aria-keyshortcuts="Control+A Meta+A" title="בחר את תוצאות הסינון (Ctrl+A)"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg><span>בחר מוצגות</span></button>
+          <button id="selectAllBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5z"/><path d="m8 12 2.5 2.5L16 9"/></svg><span>בחר הכול</span></button>
+          <button id="resetFiltersBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v5h5"/><path d="M5.2 11A7 7 0 1 0 7 6.2"/></svg><span>איפוס סינון</span></button>
+          <button id="clearAllBtn" class="danger-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 11v6M14 11v6M7 7l1 13h8l1-13M9 7l1-3h4l1 3"/></svg><span>נקה הכל</span></button>
         </div>
       </div>
       <div id="bulkActions" class="bulk-actions" hidden>
@@ -88,23 +119,27 @@
         <label>שינוי צבע
           <select id="bulkColor"></select>
         </label>
-        <button id="applyBulkColorBtn" class="secondary-btn" type="button">החל צבע</button>
+        <button id="applyBulkColorBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.7 15.9 4.8a2.1 2.1 0 0 1 3 0l.3.3a2.1 2.1 0 0 1 0 3L7.3 20H4v-3.3Z"/><path d="M4 21h16"/></svg><span>החל צבע</span></button>
         <label>הוספת תגיות
           <input id="bulkTags" type="text" maxlength="500" placeholder="אמונה, לעיון" />
         </label>
-        <button id="applyBulkTagsBtn" class="secondary-btn" type="button">הוסף תגיות</button>
-        <button id="exportSelectedBtn" class="secondary-btn" type="button">ייצוא נבחרים</button>
-        <button id="deleteSelectedBtn" class="danger-btn" type="button" aria-keyshortcuts="Delete">מחק נבחרים</button>
-        <button id="clearSelectionBtn" class="icon-btn" type="button">בטל בחירה</button>
+        <button id="applyBulkTagsBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h9M4 12h6M4 16.5h8"/><path d="M16 14v6M13 17h6"/></svg><span>הוסף תגיות</span></button>
+        <button id="exportSelectedBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M8 11l4 4 4-4M5 19h14"/></svg><span>ייצוא נבחרים</span></button>
+        <button id="deleteSelectedBtn" class="danger-btn" type="button" aria-keyshortcuts="Delete"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 11v6M14 11v6M7 7l1 13h8l1-13M9 7l1-3h4l1 3"/></svg><span>מחק נבחרים</span></button>
+        <button id="clearSelectionBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg><span>בטל בחירה</span></button>
       </div>
       <div id="undoDeleteBar" class="undo-bar" hidden>
         <span id="undoDeleteText"></span>
-        <button id="undoDeleteBtn" class="secondary-btn" type="button">ביטול מחיקה</button>
-        <button id="dismissUndoBtn" class="icon-btn" type="button" aria-label="סגור">×</button>
+        <button id="undoDeleteBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7 4 12l5 5"/><path d="M5 12h8a6 6 0 0 1 6 6"/></svg><span>ביטול מחיקה</span></button>
+        <button id="dismissUndoBtn" class="icon-btn" type="button" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
       </div>
       <div id="highlightsList" class="highlights-list" aria-live="polite"></div>
       <div class="load-more-row">
-        <button id="loadMoreBtn" class="secondary-btn" type="button" hidden>טען עוד</button>
+        <button id="loadMoreBtn" class="secondary-btn" type="button" hidden><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M7 14l5 5 5-5"/></svg><span>טען עוד</span></button>
       </div>
     </section>
 
@@ -112,15 +147,22 @@
       <form id="colorsForm" class="settings-form">
         <div id="colorsAutoSaveStatus" class="autosave-status" role="status" hidden></div>
 
-        <section class="card">
+        <section class="card accent-colors">
           <div class="card-title-row">
-            <h2>צבעים</h2>
-            <button id="addColorBtn" class="secondary-btn" type="button">הוסף צבע</button>
+            <h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 0 17h1.2a1.8 1.8 0 0 0 0-3.6h-.7a1.5 1.5 0 0 1 0-3h2.2A5.8 5.8 0 0 0 20.5 8 8.5 8.5 0 0 0 12 3.5Z"/><circle cx="8" cy="9" r="1"/><circle cx="11.5" cy="6.8" r="1"/><circle cx="15.5" cy="8" r="1"/></svg><span>צבעים</span></h2>
+            <button id="addColorBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>הוסף צבע</span></button>
           </div>
-          <p class="card-note" id="menuColorLimitNote"></p>
+          <div class="color-guide" role="note">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 0 17h1.2a1.8 1.8 0 0 0 0-3.6h-.7a1.5 1.5 0 0 1 0-3h2.2A5.8 5.8 0 0 0 20.5 8 8.5 8.5 0 0 0 12 3.5Z"/><circle cx="8" cy="9" r="1"/><circle cx="11.5" cy="6.8" r="1"/><circle cx="15.5" cy="8" r="1"/></svg>
+            <div>
+              <strong>כך מנהלים את מגש הצבעים</strong>
+              <span>בחרו גוון ושם, הפעילו אותו ופתחו את עריכת הסגנון. סדר הרשימה הוא גם סדר הצבעים בתפריט.</span>
+              <small id="menuColorLimitNote"></small>
+            </div>
+          </div>
           <div id="colorsEditor" class="colors-editor"></div>
           <div class="centered-actions" style="padding: 12px 16px 16px;">
-            <button id="resetColorsBtn" class="pink-btn" type="button">איפוס צבעים</button>
+            <button id="resetColorsBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v5h5"/><path d="M5.2 11A7 7 0 1 0 7 6.2"/></svg><span>איפוס צבעים</span></button>
           </div>
         </section>
 
@@ -130,16 +172,20 @@
     <section id="settingsTab" class="tab-panel" data-panel="settings">
       <form id="preferencesForm" class="settings-form">
         <div id="preferencesAutoSaveStatus" class="autosave-status" role="status" hidden></div>
-        <section class="card settings-card">
-          <div class="card-title-row"><h2>תצוגת ההדגשות</h2></div>
+        <div class="settings-guide" role="note">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>
+          <span>כל שינוי בהגדרות נשמר אוטומטית. אפשר לשנות תצוגה, תפריט סימון, תגיות, ייצוא וגיבוי בלי ללחוץ על כפתור שמירה.</span>
+        </div>
+        <section class="card settings-card accent-display">
+          <div class="card-title-row"><h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5"/></svg><span>תצוגת ההדגשות</span></h2></div>
           <div class="settings-grid">
             <label>סגנון תצוגה
               <select id="viewMode" name="viewMode">
                 <option value="content">תוכן</option>
                 <option value="tiles">אריחים</option>
                 <option value="list">רשימה</option>
-                <option value="compact">פריטים קטנים</option>
                 <option value="details">פרטים</option>
+                <option value="compact">פריטים קטנים</option>
               </select>
             </label>
             <label>סוג גופן
@@ -166,8 +212,8 @@
           </div>
         </section>
 
-        <section class="card settings-card centered-card">
-          <div class="card-title-row"><h2>תפריט סימון</h2></div>
+        <section class="card settings-card centered-card accent-menu">
+          <div class="card-title-row"><h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.7 15.9 4.8a2.1 2.1 0 0 1 3 0l.3.3a2.1 2.1 0 0 1 0 3L7.3 20H4v-3.3Z"/><path d="M4 21h16"/></svg><span>תפריט סימון</span></h2></div>
           <fieldset class="radio-group" id="menuStyleGroup">
             <legend>סגנון תפריט</legend>
             <label>
@@ -181,23 +227,22 @@
               <span class="radio-hint">הצגת הצבעים ברשימה נפתחת</span>
             </label>
           </fieldset>
-          <p class="card-note settings-note">המחק מופיע כשאפילו חלק קטן מהטקסט המסומן נבחר.</p>
         </section>
 
-        <section class="card settings-card centered-card">
-          <div class="card-title-row"><h2>ניהול תגיות</h2></div>
+        <section class="card settings-card centered-card accent-tags">
+          <div class="card-title-row"><h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h9l7 7-7 7-9-9V6Z"/><circle cx="8" cy="10" r="1"/></svg><span>ניהול תגיות</span></h2></div>
           <p class="card-note">שינוי שם, מיזוג או מחיקה בכל ההדגשות.</p>
           <div class="tag-manager-grid">
             <label>תגית קיימת<select id="manageTagSource"></select></label>
             <label>שם או יעד חדש<input id="manageTagTarget" type="text" maxlength="40" placeholder="שם התגית" /></label>
-            <button id="renameTagBtn" class="secondary-btn" type="button">שנה שם</button>
-            <button id="mergeTagBtn" class="secondary-btn" type="button">מזג לתגית</button>
-            <button id="deleteTagBtn" class="danger-btn" type="button">מחק תגית</button>
+            <button id="renameTagBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 16 10.5-10.5a2.1 2.1 0 0 1 3 3L8 19H5v-3Z"/><path d="M4 21h16"/></svg><span>שנה שם</span></button>
+            <button id="mergeTagBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h6a4 4 0 0 1 4 4v6M19 17l-4 4-4-4"/></svg><span>מזג לתגית</span></button>
+            <button id="deleteTagBtn" class="danger-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 11v6M14 11v6M7 7l1 13h8l1-13M9 7l1-3h4l1 3"/></svg><span>מחק תגית</span></button>
           </div>
         </section>
 
-        <section class="card settings-card centered-card">
-          <div class="card-title-row"><h2>תבנית ייצוא לקריאה</h2></div>
+        <section class="card settings-card centered-card accent-export">
+          <div class="card-title-row"><h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg><span>תבנית ייצוא לקריאה</span></h2></div>
           <div class="export-template-grid">
             <label>פורמט
               <select id="humanExportFormat">
@@ -211,38 +256,84 @@
             <label class="toggle-row"><input id="exportIncludeNote" type="checkbox" /> הערות</label>
             <label class="toggle-row"><input id="exportIncludeTags" type="checkbox" /> תגיות</label>
             <label class="toggle-row"><input id="exportIncludeDate" type="checkbox" /> תאריך</label>
-            <button id="exportVisibleHumanBtn" class="primary-btn" type="button">ייצא את התוצאות המוצגות</button>
+            <button id="exportVisibleHumanBtn" class="primary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M8 11l4 4 4-4M5 19h14"/></svg><span>ייצא את התוצאות המוצגות</span></button>
           </div>
         </section>
 
-        <section class="card settings-card centered-card">
-          <div class="card-title-row"><h2>גיבוי ושחזור</h2></div>
+        <section class="card settings-card centered-card accent-backup">
+          <div class="card-title-row"><h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 1 1-7.2 4.5"/><path d="M4 4v5h5M12 8v5l3 2"/></svg><span>גיבוי ושחזור</span></h2></div>
           <p class="card-note backup-note">קובץ הגיבוי כולל את כל ההדגשות, הצבעים והגדרות התצוגה.</p>
           <div class="backup-actions">
-            <button id="exportBackupBtn" class="secondary-btn" type="button">ייצוא גיבוי</button>
+            <button id="exportBackupBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M8 11l4 4 4-4M5 19h14"/></svg><span>ייצוא גיבוי</span></button>
             <label>אופן הייבוא
               <select id="importMode">
                 <option value="merge">מיזוג עם הקיים</option>
                 <option value="replace">החלפת כל הנתונים</option>
               </select>
             </label>
-            <button id="importBackupBtn" class="secondary-btn" type="button">ייבוא גיבוי</button>
+            <button id="importBackupBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V9M8 13l4-4 4 4M5 5h14"/></svg><span>ייבוא גיבוי</span></button>
           </div>
           <input id="backupFileInput" type="file" accept="application/json,.json" hidden />
         </section>
 
         <div class="form-actions centered-actions">
-          <button id="resetPreferencesBtn" class="pink-btn" type="button">איפוס תצוגה</button>
+          <button id="resetPreferencesBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v5h5"/><path d="M5.2 11A7 7 0 1 0 7 6.2"/></svg><span>איפוס תצוגה</span></button>
         </div>
       </form>
     </section>
+    </div>
   </main>
+
+  <dialog id="addColorDialog" class="edit-dialog color-create-dialog">
+    <form id="addColorForm" method="dialog">
+      <div class="dialog-title-row">
+        <div>
+          <h2>הוספת צבע חדש</h2>
+          <p>בחרו גוון, שם וסגנון. הצבע יתווסף רק לאחר שמירה.</p>
+        </div>
+        <button id="closeAddColorDialogBtn" class="icon-btn" type="button" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="color-create-layout">
+        <label>שם הצבע
+          <input id="newColorLabel" type="text" maxlength="24" value="גוון חדש" autocomplete="off" />
+        </label>
+        <label>גוון
+          <div class="create-color-input"><input id="newColorPicker" type="color" value="#D8B4E2" /><input id="newColorHex" type="text" value="#D8B4E2" maxlength="7" inputmode="text" spellcheck="false" /></div>
+        </label>
+        <label>אופן הסימון
+          <select id="newColorMarkerMode">
+            <option value="text-background">רקע לטקסט</option>
+            <option value="underline">קו תחתון</option>
+            <option value="box">מסגרת</option>
+            <option value="line-marker">צבע לטקסט</option>
+          </select>
+        </label>
+        <label>שקיפות <output id="newColorOpacityOutput">45%</output>
+          <input id="newColorOpacity" type="range" min="0.15" max="1" step="0.05" value="0.45" />
+        </label>
+        <label id="newColorRadiusField">עיגול פינות
+          <input id="newColorRadius" type="range" min="0" max="16" step="1" value="4" />
+        </label>
+      </div>
+      <div id="newColorPreview" class="new-color-preview"><span>תצוגה מקדימה</span><strong>טקסט מסומן לדוגמה</strong></div>
+      <div class="form-actions">
+        <button id="cancelAddColorBtn" class="secondary-btn" type="button">ביטול</button>
+        <button id="saveNewColorBtn" class="primary-btn" type="submit">שמור והוסף צבע</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="editHighlightDialog" class="edit-dialog">
     <form id="editHighlightForm" method="dialog">
       <div class="dialog-title-row">
         <h2>עריכת הדגשה</h2>
-        <button id="closeEditDialogBtn" class="icon-btn" type="button" aria-label="סגור">×</button>
+        <button id="closeEditDialogBtn" class="icon-btn" type="button" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
       </div>
       <p id="editHighlightPreview" class="edit-preview"></p>
       <label>צבע
@@ -259,12 +350,14 @@
         <input id="editHighlightFavorite" type="checkbox" /> מועדפת
       </label>
       <div class="form-actions">
-        <button id="cancelEditHighlightBtn" class="secondary-btn" type="button">ביטול</button>
-        <button class="primary-btn" type="submit">שמור שינויים</button>
+        <button id="cancelEditHighlightBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg><span>ביטול</span></button>
+        <button class="primary-btn" type="submit"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h12l2 2v14H5z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/></svg><span>שמור שינויים</span></button>
       </div>
     </form>
   </dialog>
 
+  <script src="js/marker-domain.js"></script>
+  <script src="js/marker-runtime.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
