@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "com.otzaria-marker",
   "name": "מרקר",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "סימון טקסט בצבעים מתפריט מקש ימני וניהול כל ההדגשות בצורה נוחה במקום אחד.",
   "author": "מיכאלוש",
   "stability": "stable",
