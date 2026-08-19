@@ -43,6 +43,10 @@ test('manifest remains an Otzaria 0.9.96 legacy-startup release', () => {
   const manifest = readJson('manifest.json');
   assert.equal(manifest.minAppVersion, '0.9.96');
   assert.equal(manifest.permissions.includes('app.run_on_startup'), true);
+  assert.equal(manifest.permissions.includes('ui.feedback'), true);
+  assert.equal(manifest.permissions.includes('plugin.storage.read'), true);
+  assert.equal(manifest.permissions.includes('plugin.storage.write'), true);
+  assert.equal(manifest.permissions.includes('events.subscribe:theme.changed'), true);
   assert.equal(manifest.permissions.includes('app.startup_contributions'), false);
   assert.equal(manifest.contributes.startup, undefined);
 });
@@ -68,4 +72,10 @@ test('SDK calls stay behind MarkerRuntime and view options keep the requested or
   const compactIndex = html.indexOf('<option value="compact">');
   assert.ok(detailsIndex >= 0 && compactIndex >= 0);
   assert.ok(detailsIndex < compactIndex);
+});
+
+test('release workflow targets the existing store record explicitly', () => {
+  const workflow = read('.github/workflows/release.yml');
+  assert.match(workflow, /otzaria-plugin-id:\s*6a6069b8dd175558ae6e4071/);
+  assert.match(workflow, /api-reference-url:.*0\.9\.96%2B741/);
 });

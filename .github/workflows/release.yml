@@ -8,11 +8,17 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: Otzaria/otzaria-plugin-validator@v1
         with:
           otzaria-user: ${{ secrets.OTZARIA_USER }}
           otzaria-password: ${{ secrets.OTZARIA_PASSWORD }}
+          # Use the stable store record from the plugin page; avoid relying on
+          # the manifest-id resolver when updating an existing listing.
+          otzaria-plugin-id: 6a6069b8dd175558ae6e4071
+          # Keep CI aligned with the published 0.9.96 compatibility target.
+          app-version: 0.9.96
+          api-reference-url: https://raw.githubusercontent.com/Otzaria/otzaria/0.9.96%2B741/docs/plugin-sdk/API_REFERENCE.md
           fail-on-warnings: false
           screenshots: screenshots/main.png
