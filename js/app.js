@@ -9,11 +9,11 @@
     hexToRgba, toSafeHex, normalizeSettings, normalizeSearchText, normalizeTags,
     rangeBounds, rangesOverlap, compactText, splitSelectionPieces,
     selectedTextOf, hasUsableSelection, buildHighlightStyle, makeHighlightId,
-    isSafeHighlightId, normalizeBootContext, ownsLegacyRuntime
+    isSafeHighlightId, normalizeBootContext, hasPermission, ownsLegacyRuntime
   } = MarkerDomain;
   const { call, callRaw, createLogger, protectEvent } = MarkerRuntime;
   const logger = createLogger('app');
-  const PLUGIN_VERSION = '0.9.1';
+  const PLUGIN_VERSION = '0.9.3';
   const COLOR_PALETTE = Object.freeze([
     ['#B7DDBB', 'מרווה'], ['#FFD08A', 'משמש'], ['#FFE27A', 'זהב'],
     ['#FFF3A6', 'לימון'], ['#B8D8F0', 'שמיים'], ['#D8B4E2', 'לבנדר'],
@@ -162,11 +162,9 @@
     // כשהרקע הוא בעל המנוע, ה-instance הגלוי עדיין חייב לעדכן מיד את הרישום
     // המשותף. אחרת ניווט למסך ההגדרות מסיר את הפריט והוא חוזר רק באתחול הבא.
     if (isForeground() && !runtimeOwner) {
-      await rebuildSharedContextMenu();
-    } else if (menuRegistered) {
-      await patchOrRebuildMenu();
-    } else if (hasUsableSelection(savedSelection || lastSelection)) {
-      await registerContextMenuItems();
+      await queueMenuTask(() => rebuildSharedContextMenu());
+    } else {
+      await queueMenuTask(() => patchOrRebuildMenu());
     }
     if (isForeground() && colorsChanged) await syncStoredHighlightStyles();
     if (isForeground() && refreshUi) {
@@ -274,10 +272,26 @@
 
   // ── Context Menu ───────────────────────────────────────────────────────────
   // Strategy:
-  //   • registerContextMenuItems() — full registration (first time or after removal)
+  //   • The root item is registered once at boot and stays registered for the
+  //     whole session — the host's `contexts` filter controls when it is shown.
+  //     Registering/removing around each selection left a window in which a
+  //     right-click found no item at all.
+  //   • registerContextMenuItems() — full registration (boot, type change, or
+  //                                  recovery after external removal)
   //   • patchOrRebuildMenu()       — uses reader.updateContextMenuItem when possible,
   //                                  falls back to full rebuild only on error
   //   • unregisterContextMenuItems() — removes the single root item
+
+  // Serializes every context-menu mutation. Selection events, the async
+  // getSelection enrichment, and settings saves all mutate the same shared
+  // host item; run concurrently, one flow could remove the item another flow
+  // had just registered and leave menuRegistered out of sync with the host.
+  let menuOps = Promise.resolve();
+  function queueMenuTask(task) {
+    const run = menuOps.then(task, task);
+    menuOps = run.then(() => {}, () => {});
+    return run;
+  }
 
   async function unregisterContextMenuItems(force = false) {
     if (!menuRegistered && !force) return;
@@ -471,9 +485,7 @@
   async function patchOrRebuildMenu() {
     const revision = selectionRevision;
     if (!menuRegistered) {
-      if (hasUsableSelection(savedSelection || lastSelection)) {
-        await registerContextMenuItems();
-      }
+      await registerContextMenuItems();
       return;
     }
 
@@ -515,12 +527,14 @@
       text: selectedTextOf(sel),
       currentIndex: sel.currentIndex ?? sel.sectionIndex ?? null
     };
+    // Only the remembered selection expires — the menu item itself stays
+    // registered, so a right-click after a long pause still shows it and the
+    // click handler re-resolves the live selection from the host.
     window.clearTimeout(selectionTimer);
     selectionTimer = window.setTimeout(() => {
       selectionRevision++;
       lastSelection  = null;
       savedSelection = null;
-      unregisterContextMenuItems().catch(() => {});
     }, 45_000);
     // Enrich with sourceRange from getSelection (may not be in the event payload)
     call('reader.getSelection', {}).then(cur => {
@@ -532,21 +546,9 @@
       };
       lastSelection  = Object.assign({}, lastSelection,  patch);
       savedSelection = Object.assign({}, savedSelection, patch);
-      patchOrRebuildMenu().catch(() => {});
+      queueMenuTask(() => patchOrRebuildMenu()).catch(() => {});
     }).catch(() => {});
     return revision;
-  }
-
-  async function refreshContextMenuForSelection() {
-    if (hasUsableSelection(lastSelection)) {
-      if (menuRegistered) {
-        await patchOrRebuildMenu();
-      } else {
-        await registerContextMenuItems();
-      }
-    } else {
-      await unregisterContextMenuItems();
-    }
   }
 
   async function resolveSelection() {
@@ -654,7 +656,6 @@
 
       if (!hasUsableSelection(selection)) {
         await call('ui.showMessage', { message: '\u05DB\u05D3\u05D9 \u05DC\u05D4\u05E9\u05EA\u05DE\u05E9 \u05D1\u05DE\u05E8\u05E7\u05E8 \u05E6\u05E8\u05D9\u05DA \u05E7\u05D5\u05D3\u05DD \u05DC\u05E1\u05DE\u05DF \u05D8\u05E7\u05E1\u05D8 \u05E2\u05DD \u05D4\u05E2\u05DB\u05D1\u05E8.' }).catch(() => {});
-        await unregisterContextMenuItems();
         return;
       }
 
@@ -672,7 +673,6 @@
         await call('ui.showMessage', {
           message: '\u05DC\u05D0 \u05E0\u05D9\u05EA\u05DF \u05DC\u05E1\u05DE\u05DF \u05D0\u05EA \u05D4\u05D8\u05E7\u05E1\u05D8 \u05D4\u05E0\u05D1\u05D7\u05E8 \u2014 \u05D4\u05DE\u05D9\u05E7\u05D5\u05DD \u05D4\u05DE\u05D3\u05D5\u05D9\u05E7 \u05DC\u05D0 \u05D6\u05D5\u05D4\u05D4.\n\u05D9\u05D9\u05EA\u05DB\u05DF \u05E9\u05D4\u05DE\u05D9\u05DC\u05D4 \u05DE\u05D5\u05D7\u05DC\u05E4\u05EA \u05D1\u05EA\u05E6\u05D5\u05D2\u05D4. \u05E0\u05E1\u05D4 \u05DC\u05D1\u05D7\u05D5\u05E8 \u05D8\u05E7\u05E1\u05D8 \u05D0\u05D7\u05E8.'
         }).catch(() => {});
-        await unregisterContextMenuItems();
         return;
       }
 
@@ -737,7 +737,7 @@
       lastSelection  = null;
       savedSelection = null;
       await renderHighlightList();
-      await unregisterContextMenuItems();
+      await queueMenuTask(() => patchOrRebuildMenu());
       await call('ui.showSuccess', { message: `\u05E0\u05E9\u05DE\u05E8 \u05D1${color.label} \u2713` }).catch(() => {});
     } catch (err) {
       logger.error('applyHighlight error:', err);
@@ -783,13 +783,17 @@
   async function loadAllHighlights() {
     const keys  = await call('storage.list');
     const hkeys = (Array.isArray(keys) ? keys : []).filter(k => String(k).startsWith(HIGHLIGHT_PREFIX));
-    const items = [];
-    for (const key of hkeys) {
+    // Fetched in parallel: sequential gets made this scale with the number of
+    // stored highlights, delaying everything that runs on selection changes.
+    const items = (await Promise.all(hkeys.map(async key => {
       try {
         const v = await call('storage.get', { key });
-        if (v?.bookId != null && v?.sectionIndex != null) items.push({ ...v, key });
-      } catch (err) { logger.warn('Failed loading highlight', key, err); }
-    }
+        return v?.bookId != null && v?.sectionIndex != null ? { ...v, key } : null;
+      } catch (err) {
+        logger.warn('Failed loading highlight', key, err);
+        return null;
+      }
+    }))).filter(Boolean);
     allHighlights = items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     return allHighlights;
   }
@@ -1175,7 +1179,7 @@
         await call('storage.remove', { key: item.key });
       }
       await renderHighlightList();
-      await patchOrRebuildMenu();
+      await queueMenuTask(() => patchOrRebuildMenu());
       await call('ui.showSuccess', {
         message: matches.length > 1
           ? '\u05D4\u05E1\u05D9\u05DE\u05D5\u05DF \u05D4\u05D5\u05E1\u05E8 \u05DE\u05DB\u05DC \u05D4\u05E9\u05D5\u05E8\u05D5\u05EA'
@@ -2425,7 +2429,11 @@
         startUiRefresh();
       }
       if (runtimeOwner) {
-        await unregisterContextMenuItems();
+        // Register the menu once, up front, and keep it registered: the host's
+        // `contexts` filter already limits it to reader selections. Waiting for
+        // the first selection event meant a fast right-click beat the (slow,
+        // storage-bound) registration and found no menu item.
+        await queueMenuTask(() => registerContextMenuItems()).catch(logger.warn);
         // Re-anchor all stored highlights, then sync stale status. When startup
         // permission is active this work belongs only to the background instance.
         reapplyAllHighlights()
@@ -2444,17 +2452,29 @@
   });
 
   on('plugin.permissions_changed', async data => {
-    if (!isForeground()) return;
+    if (!isForeground()) {
+      // The host stops the background instance only on the next app launch.
+      // Once startup permission is revoked the foreground takes over, so this
+      // instance must stop handling clicks or every action runs twice.
+      if (runtimeOwner && !hasPermission(data?.permissions, 'app.run_on_startup')) {
+        runtimeOwner = false;
+      }
+      return;
+    }
     const wasOwner = runtimeOwner;
     const willOwnRuntime = ownsLegacyRuntime(hostContext, data?.permissions);
     if (wasOwner && !willOwnRuntime) {
-      await unregisterContextMenuItems();
+      // Startup permission granted mid-session: the background instance that
+      // should take over does not exist until the next app launch. Keep serving
+      // from the foreground so the menu does not go dead until a restart.
+      return;
     }
     runtimeOwner = willOwnRuntime;
     if (!wasOwner && runtimeOwner) {
       await loadSettings();
       await reapplyAllHighlights();
       await syncStaleHighlights();
+      await queueMenuTask(() => registerContextMenuItems()).catch(logger.warn);
     }
   });
 
@@ -2466,7 +2486,6 @@
       lastSelection = null;
       savedSelection = null;
       lastEventSelection = null;
-      await unregisterContextMenuItems();
       return;
     }
     const revision = rememberSelection(data);
@@ -2476,7 +2495,7 @@
     await loadSettings();
     await loadAllHighlights();
     if (revision !== selectionRevision) return;
-    await refreshContextMenuForSelection();
+    await queueMenuTask(() => patchOrRebuildMenu());
   });
 
   // Context menu — new SDK 1.1 events (primary path)
@@ -2510,13 +2529,14 @@
     await renderHighlightList();
   });
 
+  // Both handlers only drop the remembered selection. The menu item itself
+  // stays registered — the host hides it whenever there is no selection.
   on('reader.current_ref_changed', async () => {
     if (!runtimeOwner) return;
     selectionRevision++;
     lastSelection = null;
     // Give the context-menu click event 3 s to arrive before clearing savedSelection
     setTimeout(() => { savedSelection = null; }, 3000);
-    await unregisterContextMenuItems();
   });
 
   on('navigation.changed', async () => {
@@ -2524,7 +2544,6 @@
     selectionRevision++;
     lastSelection  = null;
     savedSelection = null;
-    await unregisterContextMenuItems();
   });
 
   on(_suspended, () => {
@@ -2548,6 +2567,9 @@
     if (lastSelection && Date.now() - lastSelection.rememberedAt > 45_000) {
       lastSelection = null;
     }
+    // The host may have dropped the menu while this instance was suspended;
+    // patch verifies it and re-registers on failure.
+    queueMenuTask(() => patchOrRebuildMenu()).catch(() => {});
   });
 
 })();
