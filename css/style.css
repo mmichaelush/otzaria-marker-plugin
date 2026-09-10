@@ -84,7 +84,7 @@ p { margin: 3px 0 0; color: var(--color-on-surface-variant); font-size: .86em; }
 h2 { margin: 0; font-size: 1em; font-weight: 800; color: var(--color-primary); }
 legend { padding: 0 4px; color: var(--color-on-surface-variant); font-size: .78em; }
 
-.tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: var(--color-surface); border: 1px solid var(--color-outline-variant); border-radius: var(--radius-pill); padding: 4px; gap: 4px; }
+.tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--color-surface); border: 1px solid var(--color-outline-variant); border-radius: var(--radius-pill); padding: 4px; gap: 4px; }
 .tab { border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--color-on-surface-variant); padding: 10px 12px; min-height: 42px; }
 .tab.active { background: var(--color-secondary-container); color: var(--color-on-secondary-container); font-weight: 800; }
 .tab-panel { display: none; }
@@ -193,7 +193,6 @@ input[type="color"] { padding: 3px; min-width: 44px; inline-size: 48px; }
 .range-setting { position: relative; }
 .range-setting output { position: absolute; inset-inline-end: 0; font-weight: 700; color: var(--color-primary); }
 input[type="range"] { width: 100%; min-height: 40px; accent-color: var(--color-primary); }
-.settings-note { padding: 0 16px 14px; }
 .form-actions { display: flex; justify-content: space-between; gap: 10px; }
 .backup-note { margin-bottom: 12px; }
 .backup-actions { display: flex; gap: 10px; padding: 0 16px 16px; flex-wrap: wrap; }
@@ -268,7 +267,6 @@ input[type="range"] { width: 100%; min-height: 40px; accent-color: var(--color-p
   font-weight: 700;
   vertical-align: middle;
 }
-.menu-badge.muted { background: var(--color-surface-container-highest); color: var(--color-on-surface-variant); font-weight: 400; }
 
 .radio-group {
   border: 0;
@@ -283,94 +281,11 @@ input[type="range"] { width: 100%; min-height: 40px; accent-color: var(--color-p
 .radio-group label input[type="radio"] { margin-top: 3px; flex: none; accent-color: var(--color-primary); }
 .radio-group label span:first-of-type { font-weight: 700; }
 .radio-hint { font-size: .75em; color: var(--color-on-surface-variant); display: block; }
-
-/* ── Color Picker Popup ────────────────────────────────────────────────────── */
-/* מוצג מעל תוכן התוסף כשמצב התפריט הוא 'picker' */
-.color-picker-popup {
-  position: fixed;
-  bottom: 24px;
-  inset-inline-start: 50%;
-  transform: translateX(50%) translateY(20px);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .18s, transform .18s;
-  background: var(--color-surface);
-  border: 1px solid var(--color-outline-variant);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-xl);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  z-index: 200;
-  direction: rtl;
-}
-/* RTL: translateX הפוך */
-[dir="rtl"] .color-picker-popup {
-  transform: translateX(-50%) translateY(20px);
-}
-.color-picker-popup.visible {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateX(-50%) translateY(0);
-}
-[dir="rtl"] .color-picker-popup.visible {
-  transform: translateX(50%) translateY(0);
-}
 .picker-label {
   font-size: .84em;
   color: var(--color-on-surface-variant);
   white-space: nowrap;
 }
-.picker-pencil {
-  color: var(--color-on-surface-variant);
-  display: flex;
-  align-items: center;
-}
-.picker-colors {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.picker-color-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  border: 2px solid transparent;
-  box-shadow: var(--shadow-sm);
-  transition: transform .12s, box-shadow .12s, border-color .12s;
-  flex-shrink: 0;
-  padding: 0;
-}
-.picker-color-btn:hover {
-  transform: scale(1.18);
-  box-shadow: var(--shadow-sm);
-  border-color: var(--border-subtle);
-  background-image: none;
-}
-.picker-close {
-  border: 0;
-  background: transparent;
-  color: var(--color-on-surface-variant);
-  font-size: .9em;
-  padding: 2px 4px;
-  border-radius: var(--radius-sm);
-  min-height: unset;
-  line-height: 1;
-}
-.picker-remove-btn {
-  border: 1.5px solid var(--color-error);
-  background: transparent;
-  color: var(--color-error);
-  font-size: .8em;
-  padding: 3px 7px;
-  border-radius: var(--radius-pill);
-  min-height: unset;
-  line-height: 1;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.picker-remove-btn:hover { background: var(--color-error-container); background-image: none; }
 
 
 .fade-in { animation: fadeIn .20s ease-out; }
@@ -765,6 +680,12 @@ body .highlights-list[data-view="tiles"] .highlight-card { overflow: visible; }
   pointer-events: none;
 }
 .otz-select { position: relative; width: 100%; min-width: 0; }
+/* The focusable element is the visually hidden native select, so its focus
+   ring has to be drawn on the trigger the user can actually see. */
+.otz-native-select:focus-visible + .otz-select .otz-select-trigger {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
 .otz-select > summary { list-style: none; }
 .otz-select > summary::-webkit-details-marker { display: none; }
 .otz-select-trigger {
@@ -1249,17 +1170,6 @@ option { background: var(--color-surface-container-highest); color: var(--color-
   gap: 4px;
   margin-inline: auto;
 }
-.brand-icon {
-  width: 42px;
-  height: 42px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: var(--radius-lg);
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-  box-shadow: var(--shadow-xs);
-}
-.brand-icon svg { width: 25px; height: 25px; }
 .header-refresh, .header-spacer {
   width: 42px;
   min-width: 42px;
@@ -1410,24 +1320,6 @@ summary:focus-visible,
   text-overflow: ellipsis;
 }
 
-.brand-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
-  background: var(--color-primary-container);
-  color: var(--color-on-primary-container);
-  box-shadow: none;
-}
-
-.brand-icon svg {
-  width: 22px;
-  height: 22px;
-}
-
-.brand-icon svg path:nth-child(2) {
-  stroke: currentColor;
-}
-
 .header-refresh,
 .header-spacer {
   width: 40px;
@@ -1456,7 +1348,7 @@ summary:focus-visible,
   z-index: 8;
   margin: 0 -20px 18px;
   padding: 6px 20px;
-  grid-template-columns: repeat(3, minmax(96px, 160px));
+  grid-template-columns: repeat(4, minmax(84px, 150px));
   justify-content: center;
   gap: 4px;
   border: 0;
@@ -1793,7 +1685,7 @@ textarea:focus {
   .tabs {
     margin-inline: -12px;
     padding-inline: 12px;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .filters {
@@ -2086,14 +1978,6 @@ body {
   min-width: 0;
 }
 
-.intro-eyebrow {
-  display: inline-block;
-  margin-bottom: 2px;
-  color: var(--color-primary);
-  font-size: .7em;
-  font-weight: 700;
-}
-
 .intro-copy h2 {
   color: var(--color-on-surface);
   font-size: 1.35em;
@@ -2150,7 +2034,7 @@ body {
   top: 0;
   z-index: 8;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
   padding: 0;
   margin-block: 0 18px;
@@ -2993,4 +2877,354 @@ textarea,
   .color-row-actions { align-items: flex-start; }
   .highlights-list[data-view="content"] .row-actions { justify-content: stretch; }
   .highlights-list[data-view="content"] .row-actions > * { flex: 1 1 120px; }
+}
+
+/* ── About, support and engine notice ──────────────────────────────────────
+   Same primitives as the rest of the page: theme roles only, radius tokens
+   only, and no component-level colour that a role already covers.          */
+
+.engine-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-outline-variant);
+  border-inline-start: 4px solid var(--color-secondary);
+  border-radius: var(--radius-lg);
+  background: var(--color-secondary-container);
+  color: var(--color-on-secondary-container);
+  font-size: .82em;
+}
+
+.engine-notice[hidden] { display: none; }
+
+.engine-notice svg {
+  flex: none;
+  inline-size: 20px;
+  block-size: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.card.accent-language { --section-accent: color-mix(in srgb, var(--color-secondary) 55%, var(--color-primary)); }
+.card.accent-about { --section-accent: var(--color-primary); }
+.card.accent-support { --section-accent: color-mix(in srgb, var(--color-primary) 55%, var(--color-error)); }
+.card.accent-help { --section-accent: var(--color-outline); }
+
+.about-grid {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+  gap: 8px 14px;
+  margin: 0;
+  padding: 12px 16px 16px;
+}
+
+.about-grid dt {
+  color: var(--color-on-surface-variant);
+  font-size: .82em;
+}
+
+.about-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: .86em;
+}
+
+.about-grid kbd {
+  display: inline-block;
+  min-inline-size: 26px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-outline-variant);
+  border-block-end-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-container-high);
+  font-family: inherit;
+  font-size: .78em;
+  text-align: center;
+}
+
+.about-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+
+.about-actions button[hidden] { display: none; }
+
+.report-form {
+  display: grid;
+  gap: 12px;
+  padding: 12px 16px 16px;
+}
+
+.report-form label { width: 100%; }
+.report-form textarea { width: 100%; resize: vertical; }
+.report-form label[hidden] { display: none; }
+.report-form .form-actions { justify-content: flex-end; padding: 0; }
+
+.colors-footer-actions { padding: 12px 16px 16px; }
+
+@media (max-width: 600px) {
+  .about-grid { grid-template-columns: 1fr; gap: 3px 0; }
+  .about-grid dd { margin-block-end: 8px; }
+  .about-actions > button { flex: 1 1 100%; }
+}
+
+/* ── Rich note editor, quick filters and print ─────────────────────────────
+   Same rules as everywhere else: theme roles only, radius tokens only.     */
+
+.note-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.note-editor-label {
+  color: var(--color-on-surface-variant);
+  font-size: .82em;
+}
+
+.note-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 5px 6px;
+  border: 1px solid var(--color-outline-variant);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  border-block-end: 0;
+  background: var(--color-surface-container-low);
+}
+
+.note-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 34px;
+  block-size: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-on-surface-variant);
+}
+
+.note-tool svg {
+  inline-size: 19px;
+  block-size: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.note-tool.is-active {
+  background: var(--color-secondary-container);
+  color: var(--color-on-secondary-container);
+}
+
+.note-tool:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.note-link-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border: 1px solid var(--color-outline-variant);
+  border-block-end: 0;
+  background: var(--color-surface-container);
+}
+
+.note-link-bar[hidden] { display: none; }
+.note-link-bar input { flex: 1 1 auto; min-width: 0; }
+.note-link-bar .secondary-btn { min-height: 34px; padding-inline: 12px; }
+
+.note-content {
+  min-block-size: 190px;
+  max-block-size: 46vh;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--color-outline);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-on-surface);
+  font-size: .92em;
+  line-height: 1.6;
+}
+
+.note-content:focus {
+  outline: 0;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-subtle);
+}
+
+.note-content.is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--color-on-surface-variant);
+  opacity: .75;
+  pointer-events: none;
+}
+
+/* Shared by the editor and by the note preview inside a card, so a note
+   looks the same in both places. */
+.note-content > :first-child,
+.highlight-note.is-rich > :first-child { margin-block-start: 0; }
+.note-content > :last-child,
+.highlight-note.is-rich > :last-child { margin-block-end: 0; }
+
+.note-content p,
+.highlight-note.is-rich p { margin-block: 0 .5em; }
+
+.note-content h2,
+.highlight-note.is-rich h2 {
+  margin-block: .4em .3em;
+  color: var(--color-on-surface);
+  font-size: 1.15em;
+  font-weight: 800;
+}
+
+.note-content ul, .note-content ol,
+.highlight-note.is-rich ul, .highlight-note.is-rich ol {
+  margin-block: 0 .5em;
+  padding-inline-start: 1.5em;
+}
+
+.note-content blockquote,
+.highlight-note.is-rich blockquote {
+  margin-block: .4em;
+  margin-inline: 0;
+  padding-inline-start: 10px;
+  border-inline-start: 3px solid var(--color-outline-variant);
+  color: var(--color-on-surface-variant);
+}
+
+.note-content mark,
+.highlight-note.is-rich mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--color-secondary-container);
+  color: var(--color-on-secondary-container);
+}
+
+.note-content a,
+.highlight-note.is-rich a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+.highlight-note.is-rich { white-space: normal; }
+
+/* Quick-filter strip */
+.summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-block: 10px 0;
+  border-block-start: 1px solid var(--color-outline-variant);
+}
+
+.summary-strip[hidden] { display: none; }
+
+.summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--color-outline-variant);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-container-low);
+  color: var(--color-on-surface-variant);
+  font-size: .78em;
+}
+
+.summary-chip b {
+  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-chip.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-secondary-container);
+  color: var(--color-on-secondary-container);
+}
+
+.summary-chip.is-active b { color: inherit; }
+
+.print-header { display: none; }
+
+/* ── Paper ─────────────────────────────────────────────────────────────────
+   Printing renders this very page, so everything interactive is hidden and
+   the cards flatten into a readable list.                                  */
+/* window.print() honours @page (ui.print does not — it takes the page size
+   as call parameters instead). */
+@page {
+  size: A4 portrait;
+  margin: 14mm;
+}
+
+@media print {
+  html, body {
+    height: auto;
+    overflow: visible;
+    background: #fff;
+    color: #000;
+  }
+
+  .app-shell { max-width: none; padding: 0; gap: 0; }
+
+  .app-header,
+  .plugin-intro,
+  .engine-notice,
+  .tabs,
+  .panel-toolbar,
+  .bulk-actions,
+  .undo-bar,
+  .load-more-row,
+  .row-actions,
+  .highlight-select,
+  dialog { display: none !important; }
+
+  .tab-panel { display: none; }
+  .tab-panel[data-panel="highlights"] { display: block; }
+
+  .print-header {
+    display: block;
+    margin-block-end: 12px;
+    padding-block-end: 8px;
+    border-block-end: 1px solid #999;
+  }
+
+  .print-header h2 { color: #000; font-size: 15pt; }
+  .print-header p { color: #444; font-size: 9pt; }
+
+  .highlights-list { display: block; margin: 0; }
+
+  .highlight-card {
+    display: block;
+    break-inside: avoid;
+    margin-block-end: 8px;
+    padding: 8px 0;
+    border: 0;
+    border-block-end: 1px solid #ccc;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .highlight-card .dot { display: none; }
+  .highlight-title { font-size: 10pt; font-weight: 700; }
+  .highlight-text { font-size: 11pt; }
+  .highlight-note, .highlight-meta, .highlight-tags { font-size: 9pt; }
+  .highlight-group-title { break-after: avoid; font-size: 12pt; }
+  .highlight-note.is-rich a { color: #000; }
+  .highlight-note.is-rich a::after { content: " (" attr(href) ")"; font-size: 8pt; }
 }
