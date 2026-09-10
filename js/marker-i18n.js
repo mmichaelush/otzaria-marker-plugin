@@ -26,10 +26,6 @@
     return global.MARKER_TRANSLATIONS || {};
   }
 
-  function availableLanguages() {
-    return [SOURCE_LANGUAGE, ...Object.keys(catalogs())];
-  }
-
   /**
    * The language to render in: an explicit user choice in the plugin settings
    * wins over the host's interface language, and a language with no catalog
@@ -129,7 +125,7 @@
 
   global.MarkerI18n = Object.freeze({
     SOURCE_LANGUAGE, LANGUAGE_SETTING_KEY,
-    availableLanguages, resolveLanguage, configure, onChange,
+    resolveLanguage, configure, onChange,
     t, translateElement, translateDocument, applyDocumentLanguage,
     get language() { return language; },
     get direction() { return direction; }

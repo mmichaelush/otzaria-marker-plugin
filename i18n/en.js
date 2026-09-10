@@ -378,7 +378,6 @@
     'מערכת': 'Platform',
     'מצב הרצה': 'Run mode',
     'הדף מנהל את התוסף': 'The page drives the plugin',
-    'מופע רקע — אינו מצייר הדגשות': 'Background instance — does not draw highlights',
     'דף הבית של התוסף': 'Plugin home page',
     'עמוד התוסף בחנות': 'Plugin page in the store',
     'קיצור דרך בשולחן העבודה': 'Desktop shortcut',
@@ -436,6 +435,8 @@
     'עדכון התגית נכשל': 'Updating the tag failed',
 
     'ההערה ארוכה מהמותר ותישמר מקוצרת.': 'The note is longer than allowed and will be saved shortened.',
+
+    'לא ניתן לשמור את ההדגשה, והסימון בוטל': 'The highlight could not be saved, so the mark was removed.',
 
     // ── Engine notices ──────────────────────────────────────────────────────
     'ההרשאה „תרומות עלייה” כבויה, ולכן תפריט הלחיצה הימנית נרשם רק כשהתוסף פתוח.': 'The “startup contributions” permission is off, so the right-click menu is only registered while the plugin is open.',

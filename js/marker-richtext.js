@@ -399,7 +399,17 @@
     // and releases outside it fires no `mouseup` on the element, and the
     // toolbar would then act on a range the user has already moved past.
     // `rememberRange` ignores anything outside the editor anyway.
-    document.addEventListener('mouseup', onSelectionChange);
+    //
+    // Guarded, because this fires for every click in the page: while the
+    // dialog is closed there is nothing to update, and the work is five
+    // `queryCommandState` calls plus two DOM walks.
+    const onDocumentMouseUp = () => {
+      if (!element.isConnected) return;
+      const dialog = element.closest('dialog');
+      if (dialog && !dialog.open) return;
+      onSelectionChange();
+    };
+    document.addEventListener('mouseup', onDocumentMouseUp);
     element.addEventListener('focus', refreshToolbar);
 
     return Object.freeze({
@@ -436,7 +446,7 @@
         element.removeEventListener('keydown', onKeyDown);
         element.removeEventListener('paste', onPaste);
         element.removeEventListener('keyup', onSelectionChange);
-        document.removeEventListener('mouseup', onSelectionChange);
+        document.removeEventListener('mouseup', onDocumentMouseUp);
         element.removeEventListener('focus', refreshToolbar);
       }
     });

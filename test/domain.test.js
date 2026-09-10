@@ -152,6 +152,57 @@ test('a backup cannot replace the settings object prototype', () => {
   assert.equal(typeof settings.hasOwnProperty, 'function');
 });
 
+test('a long selection of pointed Hebrew keeps its anchor', () => {
+  // The host counts grapheme clusters. Vocalized Hebrew runs about three code
+  // points per grapheme, so counting code points would reject a selection the
+  // host accepts — and the user would lose the mark.
+  const pointed = 'בְּ'.repeat(4000);
+  assert.ok([...pointed].length > D.MAX_ANCHOR_EXACT_TEXT,
+    'the fixture must exceed the cap in code points, or it proves nothing');
+
+  const anchor = {
+    type: 'text-range-v1', schemaVersion: 1, layer: 'source',
+    start: { utf16: 0, grapheme: 0, codePoint: 0 },
+    end: { utf16: pointed.length, grapheme: 4000, codePoint: [...pointed].length },
+    exactText: pointed
+  };
+
+  assert.notEqual(D.normalizeSourceRange(anchor), null);
+  assert.notEqual(D.normalizeHighlight({
+    highlightId: 'marker-1', bookId: 'בראשית', sectionIndex: 0, sourceRange: anchor
+  }), null);
+});
+
+test('a stored anchor is a copy, never the caller object', () => {
+  const anchor = {
+    start: { utf16: 0 }, end: { utf16: 4 }, exactText: 'שלום'
+  };
+  const stored = D.normalizeHighlight({
+    highlightId: 'marker-2', bookId: 'בראשית', sectionIndex: 0, sourceRange: anchor
+  }).sourceRange;
+
+  assert.notEqual(stored, anchor, 'an imported anchor is untrusted input like any other');
+  // A JSON round trip: the copy is built inside the sandbox realm, so a deep
+  // comparison would be comparing prototypes rather than values.
+  assert.deepEqual(JSON.parse(JSON.stringify(stored)), anchor);
+});
+
+test('a book identifier is cleaned like every other host string', () => {
+  const record = D.normalizeHighlight({
+    highlightId: 'marker-3',
+    bookId: `בראשית${String.fromCharCode(7)}`,
+    bookUid: `id:${String.fromCharCode(0)}183`,
+    sectionIndex: 0,
+    sourceRange: { start: { utf16: 0 }, end: { utf16: 4 }, exactText: 'שלום' }
+  });
+
+  // The host runs bookId through the same _optionalText as a note: one
+  // control character fails every call for this record, forever.
+  assert.equal(record.bookId, 'בראשית');
+  assert.equal(record.bookUid, 'id:183');
+  assert.ok(record.bookId.length <= 500);
+});
+
 test('an oversized anchor is dropped instead of stored', () => {
   const anchor = extra => ({
     type: 'text-range-v1', schemaVersion: 1, layer: 'source',

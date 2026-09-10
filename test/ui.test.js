@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 
 /**
  * Static contract checks for the page.
@@ -17,6 +18,12 @@ const ROOT = path.join(__dirname, '..');
 const read = relativePath => fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
 
 const HTML = read('index.html');
+const D = (() => {
+  const context = { globalThis: null };
+  context.globalThis = context;
+  vm.runInNewContext(read('js/marker-domain.js'), context, { filename: 'marker-domain.js' });
+  return context.MarkerDomain;
+})();
 const UI = read('js/marker-ui.js');
 const CSS = read('css/style.css');
 
@@ -47,6 +54,29 @@ test('the ids addressed through a template string are declared too', () => {
     assert.equal(HTML.includes(`id="${id}"`), true, `${id} is missing`);
     assert.equal(UI.includes(`'${id}'`), true, `${id} is never passed to scheduleAutoSave`);
   }
+});
+
+test('the note link bar is only ever hidden through resetLinkBar', () => {
+  // #noteLinkUrl is a type="url" inside #editHighlightForm. Hidden while
+  // enabled and holding an invalid value, it makes the whole form
+  // un-submittable over a control the browser cannot focus — saving a note
+  // dies silently for the rest of the session. resetLinkBar is what disables
+  // it, so every path that hides the bar has to go through it.
+  const hides = [...UI.matchAll(/\$\('#noteLinkBar'\)\.hidden = true/g)];
+  assert.equal(hides.length, 1, 'a second place hides the bar without resetting it');
+  const guard = /function resetLinkBar\(\) \{[\s\S]*?input\.disabled = true;[\s\S]*?hidden = true/;
+  assert.match(UI, guard, 'resetLinkBar must disable the input, not just hide the bar');
+  assert.match(UI, /function closeEditDialog\(\) \{\s*resetLinkBar\(\);/,
+    'closing the edit dialog must reset the bar too');
+});
+
+test('the status filter offers exactly the statuses the domain knows', () => {
+  // A value in the markup that `matchesStatus` does not know falls through
+  // its `default` and silently shows everything — a filter that looks
+  // applied and filters nothing.
+  const select = /<select id="statusFilter"[\s\S]*?<\/select>/.exec(HTML)?.[0] || '';
+  const values = [...select.matchAll(/value="([^"]+)"/g)].map(match => match[1]);
+  assert.deepEqual(values.sort(), [...D.STATUS_FILTERS].sort());
 });
 
 test('every tab button has a matching panel', () => {

@@ -28,7 +28,6 @@
     ['#F3B6C8', 'ורוד'], ['#C9C2F5', 'סגלגל']
   ]);
   const UNDO_WINDOW_MS = 30_000;
-  const EXTERNAL_REFRESH_MS = 4_000;
 
   // ── Session state (view-only) ──────────────────────────────────────────────
 
@@ -44,8 +43,6 @@
   let pendingDeleted = [];
   let undoTimer = null;
   let searchTimer = null;
-  let externalRefreshTimer = null;
-  let refreshInFlight = false;
   let lastRenderSignature = null;
   let enhancedSelectCounter = 0;
   const autoSaveTimers = new Map();
@@ -215,17 +212,19 @@
 
   // ── Auto-save ──────────────────────────────────────────────────────────────
 
-  /** Debounced settings write with a per-status revision guard, so a slow
-   *  earlier save can never report over a newer one. */
-  function scheduleAutoSave(next, statusId, delay = 450) {
-    // `normalizeSettings(null)` returns the defaults, so a nullish payload
-    // here would quietly overwrite every setting the user has. Nothing should
-    // reach this with one; if something does, the bug is upstream.
-    if (!next || typeof next !== 'object') {
-      logger.error('Refusing to auto-save an empty settings payload', { statusId });
-      return;
-    }
-    const snapshot = D.structuredCloneSafe(next);
+  /**
+   * Debounced settings write, with a per-status revision guard so a slow
+   * earlier save can never report over a newer one.
+   *
+   * `collect` is a **function**, called when the timer fires rather than
+   * when it is set. That matters because a settings object is whole: the two
+   * forms auto-save independently, and a snapshot taken on the Settings tab
+   * carries a copy of the colors as they were at that moment. Saved a moment
+   * later, it would put them back — silently undoing a color the user changed
+   * in between. Collecting at flush time means each form writes its own
+   * fields onto whatever the committed state is by then.
+   */
+  function scheduleAutoSave(collect, statusId, delay = 450) {
     const revision = (autoSaveRevisions.get(statusId) || 0) + 1;
     autoSaveRevisions.set(statusId, revision);
     clearTimeout(autoSaveTimers.get(statusId));
@@ -238,7 +237,14 @@
     }
     autoSaveTimers.set(statusId, setTimeout(async () => {
       try {
-        await Core.saveSettings(snapshot);
+        const payload = collect();
+        // `normalizeSettings(null)` returns the defaults, so a nullish payload
+        // would quietly overwrite every setting the user has.
+        if (!payload || typeof payload !== 'object') {
+          logger.error('Refusing to auto-save an empty settings payload', { statusId });
+          return;
+        }
+        await Core.saveSettings(payload);
         // Only the newest save may drop the draft: an older one finishing late
         // would discard edits the user made while it was in flight.
         if (revision !== autoSaveRevisions.get(statusId)) return;
@@ -719,14 +725,26 @@
     input.focus();
   }
 
-  function closeLinkBar() {
+  /**
+   * Puts the link bar back to its inert state.
+   *
+   * Every path that hides the bar must go through here. The input is a
+   * `type="url"` inside `#editHighlightForm`, so a leftover value, a
+   * leftover validity message, or simply being left enabled while hidden
+   * makes the form permanently un-submittable — the browser refuses to
+   * submit over a control it cannot focus, and saving a note dies silently
+   * for the rest of the session.
+   */
+  function resetLinkBar() {
     const input = $('#noteLinkUrl');
-    // Both matter: the field is part of the edit form, so a leftover value or
-    // a leftover validity message would silently block saving the note.
     input.setCustomValidity('');
     input.value = '';
     input.disabled = true;
     $('#noteLinkBar').hidden = true;
+  }
+
+  function closeLinkBar() {
+    resetLinkBar();
     noteEditor().focus();
   }
 
@@ -766,7 +784,7 @@
     syncEnhancedSelect(colorSelect);
     // Records written before rich notes existed carry plain text only.
     noteEditor().setHtml(item.noteHtml || RichText.fromPlainText(item.note));
-    $('#noteLinkBar').hidden = true;
+    resetLinkBar();
     $('#editHighlightTags').value = item.tags.join(', ');
     $('#editHighlightFavorite').checked = item.favorite === true;
     $('#editHighlightPreview').textContent = item.text || t('הדגשה ללא תצוגה מקדימה');
@@ -777,6 +795,7 @@
   }
 
   function closeEditDialog() {
+    resetLinkBar();
     editingKey = null;
     editor?.clearDirty();
     Core.setUnsavedChanges(false);
@@ -957,13 +976,10 @@
         borderRadius: Number($('[data-field="borderRadius"]', row).value)
       };
     });
-    // `view` always comes from the live settings, never from the draft: the
-    // draft may predate a tab switch that already persisted a newer view, and
-    // this save would quietly roll it back.
-    return D.normalizeSettings(Object.assign({}, settings(), {
-      colors,
-      view: Core.settings.view
-    }));
+    // Built over the *committed* settings, never over the draft: the draft
+    // may hold the other form's pending edits, and writing them back from
+    // here would undo whatever has been saved in the meantime.
+    return D.normalizeSettings(Object.assign({}, Core.settings, { colors }));
   }
 
   function initColorDragDrop() {
@@ -978,10 +994,11 @@
       && event.target.closest('input, button, label, select, summary, details')) return;
     const source = event.currentTarget.closest('.color-row');
     if (!source) return;
-    // Held locally: an auto-save that lands mid-drag clears `draftSettings`,
-    // and reading it again at drop time would then read `null`.
+    // Held locally, and `draftSettings` is left alone until the drop
+    // actually reorders something: an auto-save that lands mid-drag would
+    // clear a shared draft, and a press that turns out to be a plain click
+    // would leave one standing forever.
     const dragBase = collectColorsFromForm();
-    draftSettings = dragBase;
     event.preventDefault();
 
     const sourceIndex = Number(source.dataset.index);
@@ -1007,7 +1024,7 @@
       colors.splice(targetIndex, 0, moved);
       draftSettings = D.normalizeSettings(Object.assign({}, dragBase, { colors }));
       renderColorsEditor();
-      scheduleAutoSave(draftSettings, 'colorsAutoSaveStatus', 100);
+      scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus', 100);
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', finish);
@@ -1049,10 +1066,10 @@
   }
 
   function collectPreferencesFromForm() {
-    return D.normalizeSettings(Object.assign({}, settings(), {
-      view: Core.settings.view,          // see collectColorsFromForm
+    // Over the committed settings — see collectColorsFromForm.
+    return D.normalizeSettings(Object.assign({}, Core.settings, {
       language: $('#languageSelect').value,
-      menuStyle: $('input[name="menuStyle"]:checked')?.value || settings().menuStyle,
+      menuStyle: $('input[name="menuStyle"]:checked')?.value || Core.settings.menuStyle,
       autoBackup: $('#autoBackupToggle').checked,
       appearance: {
         viewMode: $('#viewMode').value,
@@ -1260,9 +1277,7 @@
     $('#aboutPluginVersion').textContent = Core.PLUGIN_VERSION;
     $('#aboutHostVersion').textContent = host.appVersion;
     $('#aboutPlatform').textContent = host.platform;
-    $('#aboutRunMode').textContent = Core.isEngine
-      ? t('הדף מנהל את התוסף')
-      : t('מופע רקע — אינו מצייר הדגשות');
+    $('#aboutRunMode').textContent = t('הדף מנהל את התוסף');
     $('#createShortcutBtn').hidden = !host.isDesktop;
     $('#createStartMenuShortcutBtn').hidden = host.platform !== 'windows';
     $('#reportEmailField').hidden = await Core.hasReporterEmail();
@@ -1394,27 +1409,6 @@
    * that case — when the page itself owns the engine, nothing external can
    * change the data and the timer never starts.
    */
-  function startExternalRefresh() {
-    stopExternalRefresh();
-    if (Core.isEngine) return;
-    externalRefreshTimer = setInterval(async () => {
-      if (activeTab() !== 'highlights' || document.visibilityState === 'hidden' || refreshInFlight) return;
-      refreshInFlight = true;
-      try {
-        await Core.loadHighlights();
-      } catch (error) {
-        logger.warn('External refresh failed', error);
-      } finally {
-        refreshInFlight = false;
-      }
-    }, EXTERNAL_REFRESH_MS);
-  }
-
-  function stopExternalRefresh() {
-    if (externalRefreshTimer) clearInterval(externalRefreshTimer);
-    externalRefreshTimer = null;
-  }
-
   /**
    * What "the list changed" means for the background poll.
    *
@@ -1772,7 +1766,11 @@
       if (!button) return;
       const row = button.closest('.color-row');
       const index = Number(row.dataset.index);
-      draftSettings = collectColorsFromForm();
+      // Deliberately local. `draftSettings` is only set on the paths that
+      // schedule a save, because a draft left standing makes `settings()`
+      // shadow the real settings — a later import would render, and then
+      // save, the stale colors instead of the imported ones.
+      const draft = collectColorsFromForm();
 
       const setRowHex = hex => {
         row.querySelector('[data-field="hex"]').value = hex;
@@ -1781,8 +1779,9 @@
         row.style.setProperty('--marker-preview-color',
           D.hexToRgba(hex, Number(row.querySelector('[data-field="opacity"]').value)));
         draftSettings = collectColorsFromForm();
-        scheduleAutoSave(draftSettings, 'colorsAutoSaveStatus', 150);
+        scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus', 150);
       };
+
 
       switch (button.dataset.action) {
         case 'preset':
@@ -1806,26 +1805,26 @@
           return;
         }
         case 'remove':
-          draftSettings.colors.splice(index, 1);
+          draft.colors.splice(index, 1);
           break;
         case 'up':
           if (index > 0) {
-            [draftSettings.colors[index - 1], draftSettings.colors[index]] =
-              [draftSettings.colors[index], draftSettings.colors[index - 1]];
+            [draft.colors[index - 1], draft.colors[index]] =
+              [draft.colors[index], draft.colors[index - 1]];
           }
           break;
         case 'down':
-          if (index < draftSettings.colors.length - 1) {
-            [draftSettings.colors[index + 1], draftSettings.colors[index]] =
-              [draftSettings.colors[index], draftSettings.colors[index + 1]];
+          if (index < draft.colors.length - 1) {
+            [draft.colors[index + 1], draft.colors[index]] =
+              [draft.colors[index], draft.colors[index + 1]];
           }
           break;
         default:
           return;
       }
-      draftSettings = D.normalizeSettings(draftSettings);
+      draftSettings = D.normalizeSettings(draft);
       renderColorsEditor();
-      scheduleAutoSave(draftSettings, 'colorsAutoSaveStatus', 100);
+      scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus', 100);
     });
 
     editor.addEventListener('input', event => {
@@ -1858,7 +1857,7 @@
         row.style.setProperty('--marker-radius', `${event.target.value}px`);
       }
       draftSettings = collectColorsFromForm();
-      scheduleAutoSave(draftSettings, 'colorsAutoSaveStatus');
+      scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus');
     });
 
     editor.addEventListener('change', event => {
@@ -1866,13 +1865,13 @@
         event.target.closest('.color-row')?.setAttribute('data-marker-mode', event.target.value);
       }
       draftSettings = collectColorsFromForm();
-      scheduleAutoSave(draftSettings, 'colorsAutoSaveStatus', 150);
+      scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus', 150);
       if (event.target.matches('[data-field="enabled"]')) renderColorsEditor();
     });
 
     $('#colorsForm').addEventListener('submit', event => {
       event.preventDefault();
-      scheduleAutoSave(collectColorsFromForm(), 'colorsAutoSaveStatus', 0);
+      scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus', 0);
     });
     $('#resetColorsBtn').addEventListener('click', async () => {
       const confirmed = await notify.confirm(
@@ -1890,22 +1889,36 @@
     });
   }
 
+  /**
+   * Controls that live inside `#preferencesForm` for layout reasons but are
+   * not settings: the tag-management fields and the backup pickers. Typing a
+   * tag name must not write the settings and flash "saved automatically" —
+   * each keystroke would be a storage write plus a `syncContributions`
+   * against the host's RPC budget, for something that is not a preference.
+   */
+  const NON_SETTING_FIELDS =
+    '#manageTagSource, #manageTagTarget, #importMode, #autoBackupSelect';
+
   function bindPreferences() {
     const form = $('#preferencesForm');
-    form.addEventListener('input', () => {
+    const isSetting = event => !event.target?.closest?.(NON_SETTING_FIELDS);
+
+    form.addEventListener('input', event => {
+      if (!isSetting(event)) return;
       draftSettings = collectPreferencesFromForm();
       updateRangeOutputs();
       applyDisplaySettings();
-      scheduleAutoSave(draftSettings, 'preferencesAutoSaveStatus');
+      scheduleAutoSave(collectPreferencesFromForm, 'preferencesAutoSaveStatus');
     });
-    form.addEventListener('change', () => {
+    form.addEventListener('change', event => {
+      if (!isSetting(event)) return;
       draftSettings = collectPreferencesFromForm();
       applyDisplaySettings();
-      scheduleAutoSave(draftSettings, 'preferencesAutoSaveStatus', 150);
+      scheduleAutoSave(collectPreferencesFromForm, 'preferencesAutoSaveStatus', 150);
     });
     form.addEventListener('submit', event => {
       event.preventDefault();
-      scheduleAutoSave(collectPreferencesFromForm(), 'preferencesAutoSaveStatus', 0);
+      scheduleAutoSave(collectPreferencesFromForm, 'preferencesAutoSaveStatus', 0);
     });
     $('#resetPreferencesBtn').addEventListener('click', async () => {
       draftSettings = null;
@@ -2060,7 +2073,6 @@
     restoreViewState();
     renderAll();
     showEngineNotice();
-    startExternalRefresh();
     if (Core.pendingPageParam) openFromParam(Core.pendingPageParam);
     if (pendingEditId) {
       const id = pendingEditId;
@@ -2104,7 +2116,6 @@
   Core.on('language', applyLanguageToPage);
   Core.on('engine', () => {
     showEngineNotice();
-    startExternalRefresh();
     renderAbout().catch(error => logger.warn('about', error));
   });
   Core.on('page-opened', param => openFromParam(param));
@@ -2124,11 +2135,10 @@
     applyDisplaySettings();
   }, logger);
 
-  R.on('plugin.suspended', () => stopExternalRefresh(), logger);
-  R.on('plugin.resumed', async () => {
-    startExternalRefresh();
-    await Core.loadHighlights();
-  }, logger);
+  // Storage is the authority, and it may have moved on while the page was
+  // suspended — a fresh read on resume, but no polling in between: this is
+  // the only instance, so nothing else writes.
+  R.on('plugin.resumed', () => Core.loadHighlights(), logger);
 
   Core.start();
 })(globalThis);

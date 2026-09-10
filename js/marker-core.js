@@ -463,6 +463,13 @@
           status: response.data?.status || 'active',
           timestamp: Date.now()
         });
+        // The host drew the mark, but the record we would store came back
+        // unusable. Leaving it would be an orphan: visible in the reader,
+        // absent from the list, and impossible to remove from the UI.
+        if (!record) {
+          await callSoft('reader.clearHighlight', { highlightId });
+          throw new Error(t('לא ניתן לשמור את ההדגשה, והסימון בוטל'));
+        }
         await persistHighlight(record);
         created.push(record);
       }
@@ -484,7 +491,7 @@
       .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     emit('highlights', highlights);
     scheduleAutoBackup();
-    await notify.success(t('נשמר ב{color} ✓', { color: color.label }));
+    await notify.success(t('נשמר ב{color} ✓', { color: t(color.label) }));
     return created;
   }
 
@@ -667,7 +674,9 @@
     } catch (error) {
       logger.warn('revealHighlight unavailable, falling back to openBook', error?.code || error);
     }
-    const bookId = item.book || item.bookId;
+    // The identifier, not the display title: `item.book` is what the user
+    // sees on the card, and the two differ whenever the host gives a stable id.
+    const bookId = item.bookId || item.book;
     if (!bookId) throw new Error(t('לא נשמר מזהה ספר'));
     const opened = item.ref
       ? await call('reader.openBookAtRef', { bookId, ref: item.ref, index: item.sectionIndex, highlight: true })

@@ -16,7 +16,6 @@
 
   const SETTINGS_KEY = 'marker_settings';
   const HIGHLIGHT_PREFIX = 'highlight:';
-  const MENU_SIGNATURE_KEY = 'marker_menu_signature';
 
   /** Host caps: a color-row accepts 1-12 colors and 2 top-level menu items. */
   const MAX_COLORS = 12;
@@ -271,6 +270,9 @@
       devMode: app.devMode === true,
       isDesktop: ['windows', 'macos', 'linux'].includes(String(app.platform || '')),
       permissions: Array.isArray(payload?.permissions) ? [...payload.permissions] : [],
+      // Read by the page to explain a downgrade, and by the compatibility
+      // tests. Every flag turns on together, because 0.9.97 introduced them
+      // together — they are kept apart so a future split stays expressible.
       capabilities: Object.freeze({
         declarativeStartup: supportsCurrentApi,
         highlightContextMenu: supportsCurrentApi,
@@ -526,16 +528,47 @@
 
   /**
    * The host's own caps on a `text-range-v1` anchor
-   * (`PluginTextRangeAnchor` / `PluginAnchorContext`). Counting code points
-   * rather than grapheme clusters is deliberate: graphemes are never more
-   * numerous, so a code-point bound is always at least as strict.
+   * (`PluginTextRangeAnchor` / `PluginAnchorContext`).
+   *
+   * The host counts **grapheme clusters** (`String.characters.length` in
+   * Dart), and so must we. Code points are the wrong unit and in the
+   * dangerous direction: pointed Hebrew runs about three code points per
+   * grapheme, so a 4,000-grapheme selection from a vocalized text is 12,000
+   * code points — well inside the host's limit, and rejected by a code-point
+   * bound. The user would lose the mark.
    */
   const MAX_ANCHOR_EXACT_TEXT = 10000;
   const MAX_ANCHOR_CONTEXT = 128;
-  /** Generous next to the caps above, and small enough to bound storage. */
-  const MAX_ANCHOR_BYTES = 65536;
+  /**
+   * A ceiling on the stored record, not a host rule. Set far above anything a
+   * legal anchor can reach — 10,000 graphemes of heavily pointed text is on
+   * the order of 60,000 UTF-16 units — so it only ever catches the abuse it
+   * exists for: a hand-edited backup measured at 5 MB per record.
+   */
+  const MAX_ANCHOR_BYTES = 262144;
 
-  const codePointCount = value => [...String(value ?? '')].length;
+  const graphemeSegmenter = typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : null;
+
+  /**
+   * Grapheme clusters in `value`, or `null` where the engine cannot count
+   * them. `null` means "unknown", and an unknown length is never grounds for
+   * rejection — the host is the authority, and guessing low loses data.
+   */
+  function graphemeCount(value) {
+    if (!graphemeSegmenter) return null;
+    let count = 0;
+    // eslint-disable-next-line no-unused-vars
+    for (const _segment of graphemeSegmenter.segment(String(value ?? ''))) count += 1;
+    return count;
+  }
+
+  /** `true` only when the text is *known* to exceed `max` graphemes. */
+  function exceedsGraphemes(value, max) {
+    const count = graphemeCount(value);
+    return count !== null && count > max;
+  }
 
   /**
    * The anchor to store, or `null` when it is unusable.
@@ -553,11 +586,11 @@
     if (range.type != null && range.type !== 'text-range-v1') return null;
     if (range.exactText != null
       && (typeof range.exactText !== 'string'
-        || codePointCount(range.exactText) > MAX_ANCHOR_EXACT_TEXT)) return null;
+        || exceedsGraphemes(range.exactText, MAX_ANCHOR_EXACT_TEXT))) return null;
     for (const side of ['beforeText', 'afterText']) {
       const raw = range[side]?.raw;
       if (raw != null
-        && (typeof raw !== 'string' || codePointCount(raw) > MAX_ANCHOR_CONTEXT)) return null;
+        && (typeof raw !== 'string' || exceedsGraphemes(raw, MAX_ANCHOR_CONTEXT))) return null;
     }
     let serialized;
     try {
@@ -565,7 +598,10 @@
     } catch {
       return null;   // a cycle, or a value JSON cannot represent
     }
-    return serialized && serialized.length <= MAX_ANCHOR_BYTES ? range : null;
+    if (!serialized || serialized.length > MAX_ANCHOR_BYTES) return null;
+    // A copy, not the caller's object: an imported anchor is untrusted input
+    // like any other, and it is about to be stored and sent to the host.
+    return sanitizeParsed(range);
   }
 
   function rangeBounds(range) {
@@ -683,14 +719,20 @@
   function normalizeHighlight(raw, key) {
     if (!raw || !isSafeHighlightId(raw.highlightId)) return null;
     const sectionIndex = Number(raw.sectionIndex);
-    const bookId = String(raw.bookId || raw.book || '');
+    // Both are host payload fields: `_requiredString(payload, 'bookId',
+    // maxLength: 500)` runs them through `_optionalText`, so a control
+    // character or an over-long value fails every call for that record.
+    const bookId = safeHighlightText(raw.bookId || raw.book).slice(0, 500);
     if (!bookId || !Number.isInteger(sectionIndex) || sectionIndex < 0) return null;
-    if (!normalizeSourceRange(raw.sourceRange)) return null;
+    const anchor = normalizeSourceRange(raw.sourceRange);
+    if (!anchor) return null;
     return {
       highlightId: raw.highlightId,
       groupId: isSafeHighlightId(raw.groupId) ? raw.groupId : null,
       bookId,
-      bookUid: typeof raw.bookUid === 'string' ? raw.bookUid.slice(0, 200) : null,
+      bookUid: typeof raw.bookUid === 'string'
+        ? (safeHighlightText(raw.bookUid).slice(0, 200) || null)
+        : null,
       book: String(raw.book || bookId).slice(0, 500),
       sectionIndex,
       colorId: String(raw.colorId || 'yellow').slice(0, 64),
@@ -705,7 +747,7 @@
       noteHtml: String(raw.noteHtml || '').slice(0, MAX_NOTE_HTML_LENGTH),
       tags: normalizeTags(raw.tags),
       favorite: raw.favorite === true,
-      sourceRange: normalizeSourceRange(raw.sourceRange),
+      sourceRange: anchor,
       version: Number.isInteger(raw.version) ? raw.version : null,
       etag: typeof raw.etag === 'string' ? raw.etag.slice(0, 300) : null,
       status: ['active', 'stale', 'failed_to_anchor'].includes(raw.status) ? raw.status : 'active',
@@ -947,7 +989,7 @@
 
   global.MarkerDomain = Object.freeze({
     SETTINGS_SCHEMA_VERSION, BACKUP_SCHEMA_VERSION, HOST_TARGET_VERSION,
-    SETTINGS_KEY, HIGHLIGHT_PREFIX, MENU_SIGNATURE_KEY,
+    SETTINGS_KEY, HIGHLIGHT_PREFIX,
     MAX_COLORS, MAX_MENU_COLORS, MAX_TAGS_PER_HIGHLIGHT, HIGHLIGHTS_PAGE_SIZE,
     MAX_NOTE_LENGTH, MAX_NOTE_HTML_LENGTH,
     MENU_COLORS_ID, MENU_HIGHLIGHT_ID, MENU_REMOVE_ID, MENU_NOTE_ID,
