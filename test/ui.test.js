@@ -1,0 +1,226 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const test = require('node:test');
+const vm = require('node:vm');
+
+/**
+ * Static contract checks for the page.
+ *
+ * There is no DOM in these tests, so they cannot exercise behaviour — but they
+ * can prove the wiring is consistent: every id the script reaches for exists,
+ * every element the script writes into is declared once, and the stylesheet
+ * defines every class the markup uses. Those are exactly the mistakes a
+ * refactor introduces and a Node test would otherwise miss entirely.
+ */
+
+const ROOT = path.join(__dirname, '..');
+const read = relativePath => fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+
+const HTML = read('index.html');
+const D = (() => {
+  const context = { globalThis: null };
+  context.globalThis = context;
+  vm.runInNewContext(read('js/marker-domain.js'), context, { filename: 'marker-domain.js' });
+  return context.MarkerDomain;
+})();
+const UI = read('js/marker-ui.js');
+const CSS = read('css/style.css');
+
+function htmlIds() {
+  return [...HTML.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
+}
+
+function selectedIds() {
+  return new Set([...UI.matchAll(/\$\(\s*'#([A-Za-z0-9_-]+)'/g)].map(match => match[1]));
+}
+
+test('every id the page script selects exists in the markup', () => {
+  const declared = new Set(htmlIds());
+  const missing = [...selectedIds()].filter(id => !declared.has(id)).sort();
+  assert.deepEqual(missing, [], `selected but not declared: ${missing.join(', ')}`);
+});
+
+test('ids are unique', () => {
+  const ids = htmlIds();
+  const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
+  assert.deepEqual([...new Set(duplicates)], []);
+});
+
+test('the ids addressed through a template string are declared too', () => {
+  // `scheduleAutoSave` resolves `#${statusId}` at run time, so the two status
+  // elements are invisible to the selector scan above.
+  for (const id of ['colorsAutoSaveStatus', 'preferencesAutoSaveStatus']) {
+    assert.equal(HTML.includes(`id="${id}"`), true, `${id} is missing`);
+    assert.equal(UI.includes(`'${id}'`), true, `${id} is never passed to scheduleAutoSave`);
+  }
+});
+
+test('the note link bar is only ever hidden through resetLinkBar', () => {
+  // #noteLinkUrl is a type="url" inside #editHighlightForm. Hidden while
+  // enabled and holding an invalid value, it makes the whole form
+  // un-submittable over a control the browser cannot focus — saving a note
+  // dies silently for the rest of the session. resetLinkBar is what disables
+  // it, so every path that hides the bar has to go through it.
+  const hides = [...UI.matchAll(/\$\('#noteLinkBar'\)\.hidden = true/g)];
+  assert.equal(hides.length, 1, 'a second place hides the bar without resetting it');
+  const guard = /function resetLinkBar\(\) \{[\s\S]*?input\.disabled = true;[\s\S]*?hidden = true/;
+  assert.match(UI, guard, 'resetLinkBar must disable the input, not just hide the bar');
+  assert.match(UI, /function closeEditDialog\(\) \{\s*resetLinkBar\(\);/,
+    'closing the edit dialog must reset the bar too');
+});
+
+test('the chosen default color survives the trip back through the form', () => {
+  // The auto-save re-collects from the markup when the debounce fires, so a
+  // default held only in a variable would be dropped on the way out.
+  assert.match(UI, /data-default="\$\{isDefault\}"/,
+    'the row must carry its default flag in the markup');
+  assert.match(UI, /row\.dataset\.default === 'true'/,
+    'collectColorsFromForm must read the flag back');
+  assert.match(UI, /data-action="make-default"/);
+  assert.match(UI, /case 'make-default'/);
+});
+
+test('every text-entry field gets the app field styling', () => {
+  // The rule used to list the types it covered, and quietly missed `email`
+  // and `url` — the report address and the note link rendered with the
+  // browser's own square border in the middle of a rounded form. Written as
+  // an exclusion, it covers whatever type is added next.
+  const NON_TEXT = new Set([
+    'checkbox', 'radio', 'range', 'file', 'button', 'submit', 'reset', 'image'
+  ]);
+  const used = new Set(
+    [...`${HTML}\n${UI}`.matchAll(/<input[^>]*\btype="([a-z]+)"/g)].map(match => match[1])
+  );
+  const textEntry = [...used].filter(type => !NON_TEXT.has(type));
+  assert.ok(textEntry.length > 0, 'the markup scan found no fields');
+
+  const rule = /(?:^|\n)select,\s*\ntextarea,\s*\n(input:not\([^{]*?)\s*\{/.exec(CSS);
+  assert.ok(rule, 'the base field rule must stay an exclusion, not a list of types');
+  const excluded = new Set([...rule[1].matchAll(/:not\(\[type="([a-z]+)"\]\)/g)].map(m => m[1]));
+  for (const type of textEntry) {
+    assert.equal(excluded.has(type), false, `input[type="${type}"] is left unstyled`);
+  }
+});
+
+test('the status filter offers exactly the statuses the domain knows', () => {
+  // A value in the markup that `matchesStatus` does not know falls through
+  // its `default` and silently shows everything — a filter that looks
+  // applied and filters nothing.
+  const select = /<select id="statusFilter"[\s\S]*?<\/select>/.exec(HTML)?.[0] || '';
+  const values = [...select.matchAll(/value="([^"]+)"/g)].map(match => match[1]);
+  assert.deepEqual(values.sort(), [...D.STATUS_FILTERS].sort());
+});
+
+test('every tab button has a matching panel', () => {
+  const tabs = [...HTML.matchAll(/class="tab[^"]*" type="button" data-tab="([^"]+)"/g)].map(m => m[1]);
+  const panels = [...HTML.matchAll(/data-panel="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(tabs.sort(), panels.sort());
+  assert.ok(tabs.length >= 4);
+});
+
+test('the tab grid matches the number of tabs', () => {
+  const tabs = [...HTML.matchAll(/data-tab="([^"]+)"/g)].length;
+  const columns = [...CSS.matchAll(/\.tabs\s*\{[^}]*?grid-template-columns:\s*repeat\((\d+)/g)]
+    .map(match => Number(match[1]));
+  assert.ok(columns.length > 0, 'the tab grid rule moved');
+  for (const count of columns) {
+    assert.equal(count, tabs, `a .tabs rule still lays out ${count} columns for ${tabs} tabs`);
+  }
+});
+
+test('the stylesheet defines every class the markup uses', () => {
+  const used = new Set();
+  for (const match of HTML.matchAll(/\bclass="([^"]+)"/g)) {
+    for (const name of match[1].split(/\s+/)) if (name) used.add(name);
+  }
+  // Classes the script adds at run time, plus state classes toggled in JS.
+  const runtimeClasses = new Set(['active', 'dark-mode', 'is-selected', 'is-disabled',
+    'drag-dragging', 'drag-over', 'fade-in', 'otz-native-select', 'danger-action']);
+  const missing = [...used]
+    .filter(name => !runtimeClasses.has(name))
+    .filter(name => !CSS.includes(`.${name}`))
+    .sort();
+  assert.deepEqual(missing, [], `classes with no style: ${missing.join(', ')}`);
+});
+
+test('the stylesheet has no rules for classes nothing uses', () => {
+  // The reverse of the check above. Dead CSS survives refactors silently and
+  // is the main reason a stylesheet grows without anyone noticing — the rewrite
+  // left 19 rules behind from the UI the old app.js drove.
+  const consumers = ['index.html', 'js/marker-ui.js', 'js/marker-richtext.js']
+    .map(read).join('\n');
+  const declared = new Set([...CSS.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)].map(match => match[1]));
+  const orphans = [...declared]
+    .filter(name => !new RegExp(`\\b${name.replace(/-/g, '\\-')}\\b`).test(consumers))
+    .sort();
+  assert.deepEqual(orphans, [], `stylesheet classes nothing references: ${orphans.join(', ')}`);
+});
+
+test('the stylesheet has balanced braces', () => {
+  let depth = 0;
+  for (const character of CSS) {
+    if (character === '{') depth++;
+    if (character === '}') depth--;
+    assert.ok(depth >= 0, 'a stray closing brace');
+  }
+  assert.equal(depth, 0);
+});
+
+test('the page loads its scripts in dependency order', () => {
+  const order = [...HTML.matchAll(/<script src="([^"]+)"><\/script>/g)].map(match => match[1]);
+  assert.deepEqual(order, [
+    'js/marker-domain.js',
+    'js/marker-i18n.js',
+    'i18n/en.js',
+    'js/marker-runtime.js',
+    'js/marker-richtext.js',
+    'js/marker-core.js',
+    'js/marker-ui.js'
+  ]);
+});
+
+test('the engine is started exactly once, by the page script', () => {
+  assert.equal((UI.match(/Core\.start\(\)/g) || []).length, 1);
+  assert.equal(HTML.includes('MarkerCore.start()'), false, 'the page must start via marker-ui.js');
+});
+
+test('every form is wired up, and each one has a submit handler', () => {
+  const forms = [...HTML.matchAll(/<form id="([^"]+)"/g)].map(match => match[1]);
+  assert.ok(forms.length >= 4);
+  for (const form of forms) {
+    assert.ok(UI.includes(`'#${form}'`), `#${form} is never referenced by the page script`);
+  }
+  // A form without a submit handler reloads the WebView on Enter, which would
+  // silently discard whatever the user was doing.
+  const submitHandlers = (UI.match(/addEventListener\('submit'/g) || []).length;
+  assert.ok(submitHandlers >= forms.length,
+    `${forms.length} forms but only ${submitHandlers} submit handlers`);
+});
+
+test('every dialog can be dismissed without submitting', () => {
+  const dialogs = [...HTML.matchAll(/<dialog id="([^"]+)"/g)].map(match => match[1]);
+  assert.ok(dialogs.length >= 2);
+  for (const dialog of dialogs) {
+    assert.match(UI, new RegExp(`#${dialog}`), `#${dialog} is never referenced`);
+  }
+  assert.match(UI, /#closeEditDialogBtn'\)\.addEventListener\('click'/);
+  assert.match(UI, /#closeAddColorDialogBtn'\)\.addEventListener\('click'/);
+});
+
+test('the accessible name of an icon-only control is translated, not hard-coded', () => {
+  // An icon button with no text needs aria-label, and that label must be
+  // marked for translation or the English UI keeps a Hebrew screen-reader name.
+  const iconButtons = [...HTML.matchAll(/<button[^>]*class="[^"]*icon-btn[^"]*"[^>]*>/g)].map(m => m[0]);
+  assert.ok(iconButtons.length > 0);
+  for (const button of iconButtons) {
+    assert.match(button, /aria-label="/, `an icon button has no aria-label: ${button}`);
+    assert.match(button, /data-i18n-attr="[^"]*aria-label/, `an aria-label is not translated: ${button}`);
+  }
+});
+
+test('range inputs expose their current value through an output', () => {
+  for (const id of ['fontSize', 'lineHeight']) {
+    assert.match(HTML, new RegExp(`<output id="${id}Value" for="${id}">`));
+  }
+});
