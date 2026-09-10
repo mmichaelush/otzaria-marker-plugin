@@ -3,9 +3,25 @@ name: Publish plugin
 on:
   push:
     branches: [main]
+  pull_request:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: for file in js/*.js i18n/*.js; do node --check "$file"; done
+      - name: Unit tests
+        run: node --test test/*.test.js
+      - name: Whitespace check
+        run: git diff --check
+
   publish:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -17,8 +33,12 @@ jobs:
           # Use the stable store record from the plugin page; avoid relying on
           # the manifest-id resolver when updating an existing listing.
           otzaria-plugin-id: 6a6069b8dd175558ae6e4071
-          # Keep CI aligned with the published 0.9.96 compatibility target.
-          app-version: 0.9.96
-          api-reference-url: https://raw.githubusercontent.com/Otzaria/otzaria/0.9.96%2B741/docs/plugin-sdk/API_REFERENCE.md
+          # Pinned to the compatibility target declared in manifest.minAppVersion.
+          # Bump both together, never one alone.
+          app-version: 0.9.97
+          api-reference-url: https://raw.githubusercontent.com/Otzaria/otzaria/0.9.97%2B769/docs/plugin-sdk/API_REFERENCE.md
+          # Warnings stay visible in the run log but do not block a release:
+          # the validator flags a few baseline permissions that are auto-granted
+          # from 0.9.97 onward, and those warnings are informational.
           fail-on-warnings: false
           screenshots: screenshots/main.png
