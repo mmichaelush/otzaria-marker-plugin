@@ -157,6 +157,54 @@ test('the stylesheet has no rules for classes nothing uses', () => {
   assert.deepEqual(orphans, [], `stylesheet classes nothing references: ${orphans.join(', ')}`);
 });
 
+test('the stylesheet passes the store design check', () => {
+  // The store refuses the "מראה תואם לאוצריא" tag over any of these, and the
+  // publish fails with HTTP 400 — after the merge has already landed. The
+  // packaging validator only reports them as notices, so this is the only
+  // place the rule is enforced before it costs a release.
+  //
+  // Mirrors PluginExtendedValidator._checkDesignCompliance. Custom property
+  // *definitions* are stripped first: an absolute value is allowed there,
+  // because that is the default applyTheme overwrites.
+  const scanned = CSS
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/--[a-zA-Z_][\w-]*\s*:\s*[^;}]+;?/g, '');
+
+  const hex = [...scanned.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map(match => match[0]);
+  assert.deepEqual(hex, [], 'hard-coded hex colors — use var(--color-*)');
+
+  assert.equal(/\b(?:rgb|rgba|hsl|hsla)\s*\(/.test(scanned), false,
+    'hard-coded rgb()/hsl() — use var(--color-*)');
+
+  for (const match of scanned.matchAll(/font-family\s*:\s*([^;}]+)/gi)) {
+    assert.match(match[1], /var\(\s*--font/i, `font-family must be a token: ${match[1].trim()}`);
+  }
+
+  for (const match of scanned.matchAll(/border-radius\s*:\s*([^;}]+)/gi)) {
+    const value = match[1].trim();
+    if (/var\(/.test(value) || /^0(?:px)?(?:\s+0(?:px)?)*$/.test(value)) continue;
+    if (/^\d+(?:\.\d+)?\s*%$/.test(value)) continue;
+    assert.equal(/\d+\s*px/i.test(value), false,
+      `border-radius must be a token: ${value}`);
+  }
+
+  // font-size in px is allowed only under a top-bar selector, which the app
+  // requires so the bar does not grow with the reading font.
+  const selectorAt = index => {
+    const open = scanned.lastIndexOf('{', index);
+    if (open < 0) return '';
+    const previous = Math.max(scanned.lastIndexOf('}', open), scanned.lastIndexOf('{', open - 1));
+    return scanned.slice(previous + 1, open).trim();
+  };
+  for (const match of scanned.matchAll(/font-size\s*:\s*([^;}]+)/gi)) {
+    const value = match[1].trim();
+    if (/var\(/.test(value) || !/\d+\s*px/i.test(value)) continue;
+    if (/^0(?:px)?$/.test(value)) continue;
+    assert.match(selectorAt(match.index), /top-?bar/i,
+      `font-size in px outside the top bar: ${value}`);
+  }
+});
+
 test('the stylesheet has balanced braces', () => {
   let depth = 0;
   for (const character of CSS) {

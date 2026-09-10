@@ -2964,7 +2964,7 @@ textarea,
   border-block-end-width: 2px;
   border-radius: var(--radius-sm);
   background: var(--color-surface-container-high);
-  font-family: inherit;
+  font-family: var(--font-ui, var(--font-main));
   font-size: .78em;
   text-align: center;
 }
@@ -3132,7 +3132,7 @@ textarea,
 .note-content mark,
 .highlight-note.is-rich mark {
   padding: 0 2px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--color-secondary-container);
   color: var(--color-on-secondary-container);
 }
@@ -3196,11 +3196,23 @@ textarea,
 }
 
 @media print {
+  /* Paper, not theme. Print output must be dark-on-light whatever the app is
+     set to, so these are absolute on purpose — declared as tokens so every
+     rule below still reads through var(), and so a future change happens in
+     one place. */
+  :root {
+    --print-paper: #ffffff;
+    --print-ink: #000000;
+    --print-ink-muted: #444444;
+    --print-rule: #999999;
+    --print-rule-light: #cccccc;
+  }
+
   html, body {
     height: auto;
     overflow: visible;
-    background: #fff;
-    color: #000;
+    background: var(--print-paper);
+    color: var(--print-ink);
   }
 
   .app-shell { max-width: none; padding: 0; gap: 0; }
@@ -3224,11 +3236,11 @@ textarea,
     display: block;
     margin-block-end: 12px;
     padding-block-end: 8px;
-    border-block-end: 1px solid #999;
+    border-block-end: 1px solid var(--print-rule);
   }
 
-  .print-header h2 { color: #000; font-size: 15pt; }
-  .print-header p { color: #444; font-size: 9pt; }
+  .print-header h2 { color: var(--print-ink); font-size: 15pt; }
+  .print-header p { color: var(--print-ink-muted); font-size: 9pt; }
 
   .highlights-list { display: block; margin: 0; }
 
@@ -3238,7 +3250,7 @@ textarea,
     margin-block-end: 8px;
     padding: 8px 0;
     border: 0;
-    border-block-end: 1px solid #ccc;
+    border-block-end: 1px solid var(--print-rule-light);
     border-radius: 0;
     box-shadow: none;
     background: transparent;
@@ -3249,6 +3261,6 @@ textarea,
   .highlight-text { font-size: 11pt; }
   .highlight-note, .highlight-meta, .highlight-tags { font-size: 9pt; }
   .highlight-group-title { break-after: avoid; font-size: 12pt; }
-  .highlight-note.is-rich a { color: #000; }
+  .highlight-note.is-rich a { color: var(--print-ink); }
   .highlight-note.is-rich a::after { content: " (" attr(href) ")"; font-size: 8pt; }
 }
