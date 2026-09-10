@@ -1,14 +1,19 @@
-# גופנים — מוזרקים אוטומטית על ידי אוצריא, אין צורך בקובץ ה-.otzplugin
+# גופנים — מוזרקים אוטומטית על ידי אוצריא לפני plugin.boot, אין צורך לארוז אותם
 fonts/
 
-# Development and release metadata; not needed at runtime.
+# פיתוח, בדיקות ותיעוד — אינם נדרשים בזמן ריצה
 .github/
 docs/
 test/
 screenshots/
+
+# קובץ טיפוסים לפיתוח בלבד
+otzaria_plugin.d.ts
+
+# קבצי Markdown מוחרגים ממילא על ידי האורז; מפורטים כאן לשקיפות
 README.md
 CONTRIBUTING.md
 AGENTS.md
 
-# קובץ טיפוסים לפיתוח בלבד
-otzaria_plugin.d.ts
+# מה שכן נארז ואסור להחריג:
+#   index.html, manifest.json, icon/, css/, js/, i18n/
