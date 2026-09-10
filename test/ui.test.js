@@ -81,6 +81,28 @@ test('the chosen default color survives the trip back through the form', () => {
   assert.match(UI, /case 'make-default'/);
 });
 
+test('every text-entry field gets the app field styling', () => {
+  // The rule used to list the types it covered, and quietly missed `email`
+  // and `url` — the report address and the note link rendered with the
+  // browser's own square border in the middle of a rounded form. Written as
+  // an exclusion, it covers whatever type is added next.
+  const NON_TEXT = new Set([
+    'checkbox', 'radio', 'range', 'file', 'button', 'submit', 'reset', 'image'
+  ]);
+  const used = new Set(
+    [...`${HTML}\n${UI}`.matchAll(/<input[^>]*\btype="([a-z]+)"/g)].map(match => match[1])
+  );
+  const textEntry = [...used].filter(type => !NON_TEXT.has(type));
+  assert.ok(textEntry.length > 0, 'the markup scan found no fields');
+
+  const rule = /(?:^|\n)select,\s*\ntextarea,\s*\n(input:not\([^{]*?)\s*\{/.exec(CSS);
+  assert.ok(rule, 'the base field rule must stay an exclusion, not a list of types');
+  const excluded = new Set([...rule[1].matchAll(/:not\(\[type="([a-z]+)"\]\)/g)].map(m => m[1]));
+  for (const type of textEntry) {
+    assert.equal(excluded.has(type), false, `input[type="${type}"] is left unstyled`);
+  }
+});
+
 test('the status filter offers exactly the statuses the domain knows', () => {
   // A value in the markup that `matchesStatus` does not know falls through
   // its `default` and silently shows everything — a filter that looks

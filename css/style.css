@@ -106,7 +106,22 @@ legend { padding: 0 4px; color: var(--color-on-surface-variant); font-size: .78e
 .undo-bar[hidden] { display: none; }
 .undo-bar span { flex: 1; }
 label { display: inline-flex; flex-direction: column; gap: 4px; color: var(--color-on-surface-variant); font-size: .82em; }
-select, input[type="text"], input[type="search"], input[type="color"], textarea { border: 1px solid var(--color-outline); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-on-surface); padding: 8px 10px; min-height: 40px; outline: none; }
+/* Written as an exclusion, not as a list of types.
+   The list form silently missed `email` and `url`, so the report address
+   field and the note link field rendered with the browser's own square
+   border while everything around them was rounded. A list has to be
+   remembered; an exclusion covers whatever type is added next. */
+select,
+textarea,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]) {
+  border: 1px solid var(--color-outline);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-on-surface);
+  padding: 8px 10px;
+  min-height: 40px;
+  outline: none;
+}
 select:focus, input:focus { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-subtle); }
 textarea:focus { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-subtle); }
 input[type="color"] { padding: 3px; min-width: 44px; inline-size: 48px; }
