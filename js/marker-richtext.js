@@ -75,7 +75,19 @@
         sanitizeInto(child, targetNode, doc, depth + 1);
         continue;
       }
-      sanitizeInto(child, element, doc, depth + 1);
+      // A span can also be carrying bold, italic, underline or strike as CSS
+      // — from an engine that ignores `styleWithCSS`, or from pasted
+      // content. Re-express it as the equivalent allowlisted tags so the
+      // styling survives instead of being quietly dropped.
+      let inner = element;
+      if (tag === 'span') {
+        for (const styleTag of D.noteStyleTags(child.getAttribute('style'))) {
+          const wrapper = doc.createElement(styleTag);
+          inner.appendChild(wrapper);
+          inner = wrapper;
+        }
+      }
+      sanitizeInto(child, inner, doc, depth + 1);
       targetNode.appendChild(element);
     }
   }
@@ -269,11 +281,19 @@
     element.setAttribute('role', 'textbox');
     element.setAttribute('aria-multiline', 'true');
 
-    // Emit <p> instead of <div>, and inline styles instead of <font>, so the
-    // sanitizer sees the same shapes on every engine.
+    // Emit <p> instead of <div>, and tags rather than CSS for bold and its
+    // neighbours.
+    //
+    // `styleWithCSS` must stay **off**. With it on, execCommand('bold')
+    // produces <span style="font-weight:bold"> — and the sanitizer keeps no
+    // declaration but font-size, so every bold, italic, underline and strike
+    // was stripped on save. The user saw the formatting while typing and got
+    // plain text back. Off, the same commands emit <b>/<i>/<u>/<s>, which are
+    // on the allowlist, and fontSize emits <font size>, which
+    // `safeNoteFontSize` already reads.
     try {
       document.execCommand('defaultParagraphSeparator', false, 'p');
-      document.execCommand('styleWithCSS', false, true);
+      document.execCommand('styleWithCSS', false, false);
     } catch { /* not supported here; the sanitizer copes with either shape */ }
 
     function markDirty() {

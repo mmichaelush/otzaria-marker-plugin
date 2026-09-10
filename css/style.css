@@ -175,6 +175,15 @@ input[type="color"] { padding: 3px; min-width: 44px; inline-size: 48px; }
 .small-btn { border: 1px solid var(--color-outline-variant); background: var(--color-surface-container-lowest); color: var(--color-primary); border-radius: var(--radius-pill); padding: 6px 10px; min-height: 34px; }
 .danger-action { color: var(--color-error); }
 
+/* The default-color star. Filled and in the primary colour once chosen, so the
+   row that Ctrl+Alt+H will use is identifiable at a glance. */
+.default-action { color: var(--color-on-surface-variant); }
+.default-action svg { fill: none; }
+.default-action.is-default { color: var(--color-primary); }
+.default-action.is-default svg { fill: currentColor; }
+.default-action:disabled { opacity: 1; cursor: default; }
+.default-action:disabled:not(.is-default) { opacity: .38; cursor: not-allowed; }
+
 .edit-dialog { width: min(520px, calc(100vw - 24px)); border: 1px solid var(--color-outline-variant); border-radius: var(--radius-xl); padding: 0; background: var(--color-surface); color: var(--color-on-surface); box-shadow: var(--shadow-2xl); }
 .edit-dialog::backdrop { background: var(--overlay-scrim); }
 .edit-dialog form { display: flex; flex-direction: column; gap: 14px; padding: 18px; }

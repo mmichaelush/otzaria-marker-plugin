@@ -438,6 +438,16 @@
 
     'לא ניתן לשמור את ההדגשה, והסימון בוטל': 'The highlight could not be saved, so the mark was removed.',
 
+    'נקה סימון': 'Clear highlight',
+    'אין סימון בקטע שנבחר': 'No highlight in the selected text',
+    'הסימון הוסר': 'The highlight was removed',
+    '{count} סימונים הוסרו': '{count} highlights were removed',
+    '{failed} סימונים לא הוסרו': '{failed} highlights could not be removed',
+
+    'זהו צבע ברירת המחדל': 'This is the default color',
+    'הפוך לצבע ברירת המחדל': 'Make this the default color',
+    'הפוך את {name} לברירת המחדל': 'Make {name} the default color',
+
     // ── Engine notices ──────────────────────────────────────────────────────
     'ההרשאה „תרומות עלייה” כבויה, ולכן תפריט הלחיצה הימנית נרשם רק כשהתוסף פתוח.': 'The “startup contributions” permission is off, so the right-click menu is only registered while the plugin is open.',
     'ההרשאה „סימון בקורא” כבויה, ולכן ההדגשות נשמרות אך אינן מצוירות על הטקסט.': 'The “reader highlight” permission is off, so highlights are stored but not drawn over the text.'

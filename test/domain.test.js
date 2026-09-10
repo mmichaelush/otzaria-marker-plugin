@@ -231,6 +231,34 @@ test('a highlight with an unusable anchor is rejected on load', () => {
   assert.equal(D.normalizeHighlight(record), null);
 });
 
+test('CSS styling in a note maps back to the allowlisted tags', () => {
+  // execCommand under styleWithCSS, and almost anything pasted in, expresses
+  // bold as CSS. The sanitizer keeps no declaration but font-size, so without
+  // this mapping the styling is dropped on save — seen while typing, gone
+  // afterwards.
+  // Joined rather than compared deeply: the arrays are built inside the
+  // sandbox realm, so a deep comparison would be comparing prototypes.
+  const tagsFor = style => D.noteStyleTags(style).join(',');
+
+  assert.equal(tagsFor('font-weight: bold'), 'b');
+  assert.equal(tagsFor('font-weight:700'), 'b');
+  assert.equal(tagsFor('font-style: italic'), 'i');
+  assert.equal(tagsFor('text-decoration: underline'), 'u');
+  assert.equal(tagsFor('text-decoration-line: line-through'), 's');
+  assert.equal(
+    tagsFor('font-weight:bold;font-style:italic;text-decoration:underline line-through'),
+    'b,i,u,s');
+
+  // Everything else stays out: the mapping may only produce allowlisted tags.
+  assert.equal(tagsFor('color: red; position: fixed'), '');
+  assert.equal(tagsFor('font-weight: 400'), '');
+  assert.equal(tagsFor(''), '');
+  assert.equal(tagsFor(null), '');
+  for (const tag of D.noteStyleTags('font-weight:bold;font-style:italic')) {
+    assert.equal(D.noteTagFor(tag), tag, `${tag} must be on the allowlist`);
+  }
+});
+
 test('an export cannot be restructured through a note', () => {
   const forged = D.escapeMarkdownBlocks('## כותרת מזויפת\n---\nטקסט');
   assert.equal(forged.includes('\n---\n'), false, 'the record separator must not be forgeable');
@@ -250,6 +278,47 @@ test('only the page may draw highlights, never a background instance', () => {
 
 // ── Context menu payloads ───────────────────────────────────────────────────
 
+test('the menu carries at most eight colors, plus the eraser', () => {
+  const many = Array.from({ length: 12 }, (unused, index) => ({
+    id: `c${index}`, hex: '#112233', label: `צבע ${index}`, enabled: true
+  }));
+  const payload = D.buildColorMenuPayload(D.normalizeSettings({ colors: many }));
+
+  assert.equal(D.MAX_MENU_COLORS, 8);
+  assert.equal(payload.colors.length, D.MAX_MENU_COLORS + 1);
+  assert.equal(payload.colors.at(-1).id, 'mark-clear');
+  // Still inside the host's own 1-12 limit for a color row.
+  assert.ok(payload.colors.length <= 12);
+});
+
+test('the default color must be one the user can actually mark with', () => {
+  // It drives Ctrl+Alt+H. Marking with a color that is switched off — and so
+  // is not even in the menu — is not behaviour a user can explain.
+  const settings = D.normalizeSettings({
+    colors: [
+      { id: 'a', hex: '#111111', label: 'א', enabled: false },
+      { id: 'b', hex: '#222222', label: 'ב', enabled: true }
+    ],
+    defaultColorId: 'a'
+  });
+
+  assert.equal(settings.defaultColorId, 'b');
+  assert.equal(D.defaultColor(settings).id, 'b');
+});
+
+test('an explicit default is kept as long as it stays enabled', () => {
+  const settings = D.normalizeSettings({
+    colors: [
+      { id: 'a', hex: '#111111', label: 'א', enabled: true },
+      { id: 'b', hex: '#222222', label: 'ב', enabled: true }
+    ],
+    defaultColorId: 'b'
+  });
+
+  // Not simply the first in the list — the stored choice wins.
+  assert.equal(settings.defaultColorId, 'b');
+});
+
 test('the color row only carries enabled colors, in list order', () => {
   const settings = D.normalizeSettings({
     colors: [
@@ -262,7 +331,8 @@ test('the color row only carries enabled colors, in list order', () => {
   const payload = D.buildColorMenuPayload(settings);
   assert.equal(payload.id, D.MENU_COLORS_ID);
   assert.equal(payload.type, 'color-row');
-  assert.deepEqual(plain(payload.colors), [
+  const swatches = plain(payload.colors).map(({ id, color, label }) => ({ id, color, label }));
+  assert.deepEqual(swatches.slice(0, -1), [
     { id: 'mark-b', color: '#222222', label: 'ב' },
     { id: 'mark-c', color: '#333333', label: 'ג' }
   ]);

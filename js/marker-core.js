@@ -975,12 +975,63 @@
     const colorId = D.colorIdFromItemId(data?.colorId);
     // Settings may still be loading if this click is what woke the instance.
     if (!booted) await whenBooted();
+
+    if (colorId === D.CLEAR_COLOR_ID) {
+      await enqueue(() => clearHighlightsInSelection(data?.selection));
+      return;
+    }
     const color = settings.colors.find(entry => entry.id === colorId);
     if (!color) {
       logger.warn('Unknown color clicked', data?.colorId);
       return;
     }
     await enqueue(() => applyHighlight(color, data?.selection));
+  }
+
+  /**
+   * The eraser: removes every mark the selection touches.
+   *
+   * Overlap, not containment — a user dragging roughly over a mark expects it
+   * to go, not to be told the selection missed its edges by a character. Parts
+   * of a multi-paragraph highlight go together, which
+   * `highlightsOverlappingTargets` already handles through `expandByGroup`.
+   */
+  async function clearHighlightsInSelection(selection) {
+    const targets = D.selectionTargets(selection);
+    const bookId = D.bookIdOf(selection);
+    if (!targets.length || !bookId) {
+      await notify.info(await explainUnavailableSelection(selection));
+      return 0;
+    }
+
+    const doomed = D.highlightsOverlappingTargets(highlights, bookId, targets);
+    if (!doomed.length) {
+      // Silence here is indistinguishable from a dead menu item.
+      await notify.info(t('אין סימון בקטע שנבחר'));
+      return 0;
+    }
+
+    let removed = 0;
+    for (const item of doomed) {
+      try {
+        await clearHighlightRecord(item);
+        removed += 1;
+      } catch (error) {
+        logger.error('Failed clearing a highlight', error);
+      }
+    }
+    emit('highlights', highlights);
+    scheduleAutoBackup();
+
+    const failed = doomed.length - removed;
+    if (failed) {
+      await notify.error(t('{failed} סימונים לא הוסרו', { failed }));
+    } else {
+      await notify.success(removed === 1
+        ? t('הסימון הוסר')
+        : t('{count} סימונים הוסרו', { count: removed }));
+    }
+    return removed;
   }
 
   async function onMenuItemClicked(data) {

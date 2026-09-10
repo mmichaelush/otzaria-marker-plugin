@@ -54,9 +54,48 @@ test('the patched color row carries the user colors, not the manifest defaults',
   assert.equal(row.type, 'color-row');
   // No `selected`: the host paints it as a thick ring in the primary colour,
   // which users read as a glitch rather than as "your default".
-  assert.deepEqual(plain(row.colors), [
-    { id: 'mark-sea', color: '#123456', label: 'ים' }
+  const swatches = plain(row.colors).map(({ id, color, label }) => ({ id, color, label }));
+  assert.deepEqual(swatches, [
+    { id: 'mark-sea', color: '#123456', label: 'ים' },
+    { id: 'mark-clear', color: '#00000000', label: 'נקה סימון' }
   ]);
+  assert.equal(plain(row.colors).every(entry => entry.selected === undefined), true);
+});
+
+test('the eraser closes the row, so removing needs no second menu', async t => {
+  // The reader-highlight context only exists on a right-click that lands on a
+  // mark with no selection, which is not the state the user is in right after
+  // marking. Without this swatch, removing is effectively undiscoverable.
+  const host = await bootEngine();
+  t.after(host.dispose);
+
+  const row = host.contextMenu.get('marker-colors');
+  const eraser = row.colors.at(-1);
+  assert.equal(eraser.id, 'mark-clear');
+  assert.equal(eraser.icon, 'eraser_24_regular');
+  assert.equal(eraser.color, '#00000000', 'an opaque value would paint a black swatch');
+});
+
+test('the eraser removes every mark the selection touches', async t => {
+  const host = await bootEngine();
+  t.after(host.dispose);
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+  assert.equal(host.hostHighlights.size, 1);
+
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-clear', selection: selection() });
+
+  assert.equal(host.core.getHighlights().length, 0);
+  assert.equal(host.hostHighlights.size, 0, 'the mark must leave the reader too');
+});
+
+test('the eraser over clean text says so instead of doing nothing', async t => {
+  const host = await bootEngine();
+  t.after(host.dispose);
+
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-clear', selection: selection() });
+
+  assert.equal(host.callsTo('reader.setHighlight').length, 0, 'it must never mark');
+  assert.ok(host.callsTo('ui.showMessage').length > 0, 'silence reads as a dead menu item');
 });
 
 test('submenu mode replaces the color row with named children', async t => {

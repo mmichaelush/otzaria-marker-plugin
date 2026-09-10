@@ -17,9 +17,14 @@
   const SETTINGS_KEY = 'marker_settings';
   const HIGHLIGHT_PREFIX = 'highlight:';
 
-  /** Host caps: a color-row accepts 1-12 colors and 2 top-level menu items. */
+  /**
+   * The host allows a color row 1-12 entries and a plugin 2 top-level menu
+   * items. The menu carries at most 8 colors plus the eraser, which keeps the
+   * row readable in a narrow reader pane; the palette itself may still hold
+   * up to 12, and the colors editor says which ones reach the menu.
+   */
   const MAX_COLORS = 12;
-  const MAX_MENU_COLORS = 12;
+  const MAX_MENU_COLORS = 8;
   const MAX_TAGS_PER_HIGHLIGHT = 12;
   const HIGHLIGHTS_PAGE_SIZE = 100;
   const MAX_NOTE_LENGTH = 4000;
@@ -34,6 +39,20 @@
   const MENU_NOTE_ID = 'marker-note';
   const TOOLBAR_ITEM_ID = 'marker-toolbar';
   const COLOR_ITEM_PREFIX = 'mark-';
+  /**
+   * The eraser at the end of the color row.
+   *
+   * Removing a mark was otherwise reachable only through the
+   * `reader-highlight` context, and the host builds that context only when
+   * the right-click lands exactly on a mark **and there is no active
+   * selection** (`_buildClickedHighlightEntries`). Right after marking there
+   * usually is one, so the menu goes down the `reader-selection` path
+   * instead and the remove action is nowhere to be found. Otzaria's own
+   * highlight menu solves it the same way — a `clear` swatch in the row.
+   */
+  const CLEAR_COLOR_ID = 'clear';
+  /** Fully transparent: the host reads it as "no fill" and draws the icon. */
+  const CLEAR_COLOR_VALUE = '#00000000';
   /**
    * The host caps a color-row entry's `id` at 64 characters, and the id it
    * sees is `mark-` + the stored id. Budgeting for the prefix here keeps a
@@ -366,7 +385,10 @@
     }
     settings.exportTemplate = exportTemplate;
 
-    if (!settings.colors.some(color => color.id === settings.defaultColorId)) {
+    // Enabled, not merely present: the default drives the Ctrl+Alt+H
+    // shortcut, and marking with a color the user has switched off — one that
+    // is not even in the menu — is not something they can explain.
+    if (!settings.colors.some(color => color.id === settings.defaultColorId && color.enabled)) {
       settings.defaultColorId = settings.colors.find(color => color.enabled)?.id
         || settings.colors[0].id;
     }
@@ -419,12 +441,15 @@
         title,
         icon: 'highlight_24_regular',
         contexts: [...SELECTION_CONTEXTS],
-        children: colors.map(color => ({
-          id: colorItemId(color.id),
-          type: 'item',
-          title: safeMenuText(translate(color.label)),
-          icon: 'highlight_24_regular'
-        }))
+        children: [
+          ...colors.map(color => ({
+            id: colorItemId(color.id),
+            type: 'item',
+            title: safeMenuText(translate(color.label)),
+            icon: 'highlight_24_regular'
+          })),
+          clearMenuEntry(translate)
+        ]
       };
     }
     return {
@@ -435,14 +460,35 @@
       type: 'color-row',
       title,
       contexts: [...SELECTION_CONTEXTS],
-      colors: colors.map(color => ({
-        id: colorItemId(color.id),
-        color: toSafeHex(color.hex),
-        label: safeMenuText(translate(color.label))
-        // No `selected`: the host draws it as a thick primary-coloured ring,
-        // which reads as a rendering artifact rather than "this is your
-        // default colour".
-      }))
+      colors: [
+        ...colors.map(color => ({
+          id: colorItemId(color.id),
+          color: toSafeHex(color.hex),
+          label: safeMenuText(translate(color.label))
+          // No `selected`: the host draws it as a thick primary-coloured ring,
+          // which reads as a rendering artifact rather than "this is your
+          // default colour".
+        })),
+        clearMenuEntry(translate)
+      ]
+    };
+  }
+
+  /**
+   * The eraser entry, in the shape each menu style needs.
+   *
+   * `toSafeHex` is bypassed on purpose: it keeps six hex digits and would
+   * turn the transparent value into opaque black, which the host would then
+   * draw as a black swatch instead of the eraser icon.
+   */
+  function clearMenuEntry(translate = value => value) {
+    return {
+      id: colorItemId(CLEAR_COLOR_ID),
+      type: 'item',
+      color: CLEAR_COLOR_VALUE,
+      title: safeMenuText(translate('נקה סימון')),
+      label: safeMenuText(translate('נקה סימון')),
+      icon: 'eraser_24_regular'
     };
   }
 
@@ -832,6 +878,31 @@
     return /^https?:\/\/\S+$/i.test(clean) ? clean : '';
   }
 
+  /**
+   * The allowlisted tags a `style` attribute stands for.
+   *
+   * Bold and its neighbours can arrive as CSS rather than as tags — that is
+   * what `execCommand` emits under `styleWithCSS`, and it is what most
+   * pasted content carries. The sanitizer keeps no declaration but
+   * `font-size`, so without this the styling is dropped: the user watches
+   * the text go bold while typing and finds it plain after saving.
+   *
+   * Mapping to tags rather than allowing the declarations through keeps the
+   * output inside the existing allowlist, and keeps one shape in storage
+   * whatever the engine produced.
+   */
+  function noteStyleTags(styleValue) {
+    const style = String(styleValue ?? '').toLowerCase();
+    const tags = [];
+    const weight = /font-weight\s*:\s*([a-z0-9]+)/.exec(style)?.[1];
+    if (weight === 'bold' || weight === 'bolder' || Number(weight) >= 600) tags.push('b');
+    if (/font-style\s*:\s*(italic|oblique)/.test(style)) tags.push('i');
+    const decoration = /text-decoration[a-z-]*\s*:\s*([^;]+)/.exec(style)?.[1] || '';
+    if (decoration.includes('underline')) tags.push('u');
+    if (decoration.includes('line-through')) tags.push('s');
+    return tags;
+  }
+
   /** The `font-size` keyword to emit, from either a style string or `size`. */
   function safeNoteFontSize(styleValue, sizeAttribute) {
     const match = /font-size\s*:\s*([a-z-]+)/i.exec(String(styleValue ?? ''));
@@ -994,6 +1065,7 @@
     MAX_NOTE_LENGTH, MAX_NOTE_HTML_LENGTH,
     MENU_COLORS_ID, MENU_HIGHLIGHT_ID, MENU_REMOVE_ID, MENU_NOTE_ID,
     TOOLBAR_ITEM_ID, COLOR_ITEM_PREFIX, MAX_COLOR_ID_LENGTH,
+    CLEAR_COLOR_ID, CLEAR_COLOR_VALUE, clearMenuEntry,
     safeHighlightText, safeMenuText,
     SELECTION_CONTEXTS, HIGHLIGHT_CONTEXTS, LEGACY_MENU_IDS,
     COMMAND_HIGHLIGHT_DEFAULT, COMMAND_OPEN_PANEL,
@@ -1010,7 +1082,7 @@
     colorItemId, colorIdFromItemId, buildColorMenuPayload, buildHighlightMenuPayload,
     buildToolbarPayload, menuSignature,
     NOTE_TAGS, NOTE_FONT_SIZES, NOTE_SIZE_LEVELS, NOTE_MAX_DEPTH,
-    noteTagFor, safeNoteHref, safeNoteFontSize,
+    noteTagFor, safeNoteHref, safeNoteFontSize, noteStyleTags,
     normalizeSearchText, normalizeTags,
     rangeBounds, rangesOverlap, selectedTextOf, normalizeSourceRange,
     MAX_ANCHOR_EXACT_TEXT, MAX_ANCHOR_CONTEXT, MAX_ANCHOR_BYTES, sectionIndexOf, bookIdOf, bookTitleOf,

@@ -67,6 +67,10 @@
 - **כל מחרוזת שנכנסת ל-payload עוברת `safeHighlightText` או `safeMenuText`.**
   תו בקרה אחד מפיל את הקריאה כולה עם `error.invalid_params`, בלי שההדגשה
   תצויר — בדיוק כמו הבאג של `metadata.source`.
+- **`styleWithCSS` חייב להישאר כבוי.** עם הדגל דלוק `execCommand('bold')`
+  פולט `<span style="font-weight:bold">`, וה-sanitizer אינו שומר שום הצהרה
+  מלבד `font-size` — כך שכל העיצוב בהערה נמחק בשמירה. `noteStyleTags` ממפה
+  את צורת ה-CSS חזרה לתגיות, בשביל מנועים שמתעלמים מהדגל ובשביל הדבקות.
 - כל `settings` עוברים `normalizeSettings`; כל רשומת highlight עוברת
   `normalizeHighlight`. אין דרך אחרת להיכנס למאגר.
 - מזהה highlight עובר `isSafeHighlightId` לפני שהוא הופך למפתח אחסון.

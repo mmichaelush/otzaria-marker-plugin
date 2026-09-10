@@ -70,6 +70,17 @@ test('the note link bar is only ever hidden through resetLinkBar', () => {
     'closing the edit dialog must reset the bar too');
 });
 
+test('the chosen default color survives the trip back through the form', () => {
+  // The auto-save re-collects from the markup when the debounce fires, so a
+  // default held only in a variable would be dropped on the way out.
+  assert.match(UI, /data-default="\$\{isDefault\}"/,
+    'the row must carry its default flag in the markup');
+  assert.match(UI, /row\.dataset\.default === 'true'/,
+    'collectColorsFromForm must read the flag back');
+  assert.match(UI, /data-action="make-default"/);
+  assert.match(UI, /case 'make-default'/);
+});
+
 test('the status filter offers exactly the statuses the domain knows', () => {
   // A value in the markup that `matchesStatus` does not know falls through
   // its `default` and silently shows everything — a filter that looks

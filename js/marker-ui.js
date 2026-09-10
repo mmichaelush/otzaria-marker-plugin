@@ -889,11 +889,13 @@
 
   // ── Colors editor ──────────────────────────────────────────────────────────
 
-  function colorRowHtml(color, index, total) {
+  function colorRowHtml(color, index, total, { inMenu, isDefault }) {
     const hex = escapeHtml(D.toSafeHex(color.hex));
-    const inMenu = color.enabled;
+    // Enabled is not the same as shown: only the first MAX_MENU_COLORS
+    // enabled colors reach the menu, and a badge that promised otherwise
+    // would be the one place the user could not tell.
     const badge = inMenu ? ` <span class="menu-badge">${escapeHtml(t('תפריט'))}</span>` : '';
-    return `<div class="color-row" data-index="${index}" data-marker-mode="${escapeHtml(color.markerMode)}" style="--picked-color:${hex};--marker-preview-color:${D.hexToRgba(hex, color.opacity)};--marker-radius:${color.borderRadius}px">
+    return `<div class="color-row" data-index="${index}" data-default="${isDefault}" data-marker-mode="${escapeHtml(color.markerMode)}" style="--picked-color:${hex};--marker-preview-color:${D.hexToRgba(hex, color.opacity)};--marker-radius:${color.borderRadius}px">
       <div class="color-row-main">
         <button type="button" class="drag-handle" title="${escapeHtml(t('שינוי סדר'))}" aria-label="${escapeHtml(t('שינוי סדר של {name}', { name: color.label }))}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.25"/><circle cx="15" cy="6" r="1.25"/><circle cx="9" cy="12" r="1.25"/><circle cx="15" cy="12" r="1.25"/><circle cx="9" cy="18" r="1.25"/><circle cx="15" cy="18" r="1.25"/></svg></button>
         <details class="color-picker-details">
@@ -919,6 +921,7 @@
             <button type="button" data-action="up"${index === 0 ? ' disabled' : ''} title="${escapeHtml(t('העבר למעלה'))}" aria-label="${escapeHtml(t('העבר את {name} למעלה', { name: color.label }))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 14 5-5 5 5"/></svg></button>
             <button type="button" data-action="down"${index === total - 1 ? ' disabled' : ''} title="${escapeHtml(t('העבר למטה'))}" aria-label="${escapeHtml(t('העבר את {name} למטה', { name: color.label }))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
           </div>
+          <button class="color-icon-btn default-action${isDefault ? ' is-default' : ''}" type="button" data-action="make-default"${isDefault || !color.enabled ? ' disabled' : ''} title="${escapeHtml(isDefault ? t('זהו צבע ברירת המחדל') : t('הפוך לצבע ברירת המחדל'))}" aria-pressed="${isDefault}" aria-label="${escapeHtml(t('הפוך את {name} לברירת המחדל', { name: color.label }))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.8 2.5 5.1 5.6.8-4 3.9 1 5.6-5.1-2.7-5 2.7 1-5.6-4.1-3.9 5.6-.8Z"/></svg></button>
           <button class="color-icon-btn danger-action" type="button" data-action="remove"${total <= 1 ? ' disabled' : ''} title="${escapeHtml(t('מחק צבע'))}" aria-label="${escapeHtml(t('מחק את {name}', { name: color.label }))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 11v6M14 11v6M7 7l1 13h8l1-13M9 7l1-3h4l1 3"/></svg></button>
         </div>
       </div>
@@ -951,8 +954,12 @@
   function renderColorsEditor() {
     const current = settings();
     const editor = $('#colorsEditor');
+    const inMenu = new Set(D.enabledColors(current).map(color => color.id));
     editor.innerHTML = current.colors
-      .map((color, index) => colorRowHtml(color, index, current.colors.length)).join('');
+      .map((color, index) => colorRowHtml(color, index, current.colors.length, {
+        inMenu: inMenu.has(color.id),
+        isDefault: color.id === current.defaultColorId
+      })).join('');
     $('#addColorBtn').disabled = current.colors.length >= D.MAX_COLORS;
     $('#menuColorLimitNote').textContent = t('{active} צבעים פעילים — מוצגים עד {max} בתפריט', {
       active: current.colors.filter(color => color.enabled).length,
@@ -976,10 +983,16 @@
         borderRadius: Number($('[data-field="borderRadius"]', row).value)
       };
     });
+    // Read back from the markup like every other field, because the save is
+    // collected when the debounce fires rather than when the star is clicked.
+    const marked = $$('.color-row').find(row => row.dataset.default === 'true');
+    const defaultColorId = colors[Number(marked?.dataset.index)]?.id
+      || Core.settings.defaultColorId;
+
     // Built over the *committed* settings, never over the draft: the draft
     // may hold the other form's pending edits, and writing them back from
     // here would undo whatever has been saved in the meantime.
-    return D.normalizeSettings(Object.assign({}, Core.settings, { colors }));
+    return D.normalizeSettings(Object.assign({}, Core.settings, { colors, defaultColorId }));
   }
 
   function initColorDragDrop() {
@@ -1803,6 +1816,12 @@
           }
           setRowHex(value.toUpperCase());
           return;
+        }
+        case 'make-default': {
+          const chosen = draft.colors[index];
+          if (!chosen) return;
+          draft.defaultColorId = chosen.id;
+          break;
         }
         case 'remove':
           draft.colors.splice(index, 1);

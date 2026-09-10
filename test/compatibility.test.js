@@ -449,6 +449,19 @@ test('stored note markup reaches the DOM only through the sanitizer', () => {
     'sanitizedNote must delegate to RichText.sanitize');
 });
 
+test('the editor emits tags for bold, never CSS', () => {
+  // styleWithCSS(true) makes execCommand('bold') produce
+  // <span style="font-weight:bold">, and the sanitizer keeps no declaration
+  // but font-size — so every bold, italic, underline and strike was stripped
+  // the moment the note was saved.
+  const richtext = read('js/marker-richtext.js');
+  assert.match(richtext, /execCommand\('styleWithCSS', false, false\)/,
+    'styleWithCSS must be off, or note formatting is lost on save');
+  // And the CSS shape is still understood, for engines that ignore the flag
+  // and for pasted content.
+  assert.match(richtext, /D\.noteStyleTags\(/);
+});
+
 test('the sanitizer applies the policy from the domain, not its own copy', () => {
   const richtext = stripComments(read('js/marker-richtext.js'));
   for (const helper of ['noteTagFor', 'safeNoteHref', 'safeNoteFontSize']) {
