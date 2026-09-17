@@ -134,6 +134,14 @@ test('an instance that never drew a mark still scrolls to its exact line', async
   const scrolls = world.page.callsTo('reader.scrollToSection');
   assert.equal(scrolls.length, 1, 'the line is the precision the user asked for');
   assert.equal(scrolls[0].payload.sectionIndex, item.sectionIndex);
+  // Never the host's own section highlight. It is not a flash — it washes the
+  // whole navigation target in yellow and leaves it there, which at chapter
+  // level buries the very mark the user was navigating to. `false` also clears
+  // one already painted, so a reveal now cleans up after an older build.
+  assert.equal(scrolls[0].payload.highlight, false);
+  for (const call of world.page.callsTo('reader.openBookAtRef')) {
+    assert.equal(call.payload.highlight, false);
+  }
 });
 
 test('an edit in the page reaches the book, and a deletion takes it off', async t => {

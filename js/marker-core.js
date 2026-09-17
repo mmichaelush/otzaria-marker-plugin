@@ -1159,8 +1159,14 @@
     // sees on the card, and the two differ whenever the host gives a stable id.
     const bookId = item.bookId || item.book;
     if (!bookId) throw new Error(t('לא נשמר מזהה ספר'));
+    // `highlight: false`, deliberately. The host's flag paints a background
+    // over the whole navigation target and leaves it there — at chapter level
+    // that is the entire chapter, in yellow, until something clears it. The
+    // user's own mark is already drawn on the exact words they chose, which is
+    // the thing they are navigating to; a permanent wash over everything around
+    // it only buries it.
     const opened = item.ref
-      ? await call('reader.openBookAtRef', { bookId, ref: item.ref, index: item.sectionIndex, highlight: true })
+      ? await call('reader.openBookAtRef', { bookId, ref: item.ref, index: item.sectionIndex, highlight: false })
       : await call('reader.openBook', { bookId, index: item.sectionIndex });
     if (opened !== true) throw new Error(t('אוצריא לא מצאה את הספר השמור'));
     // The book is open either way; only the exact line is in doubt. Saying so
@@ -1185,7 +1191,10 @@
       if (attempt) await new Promise(resolve => setTimeout(resolve, 120));
       const scrolled = await callSoft('reader.scrollToSection', {
         sectionIndex: item.sectionIndex,
-        highlight: true
+        // Not just "don't add one": `false` also *clears* a section mark that
+        // is already there, so this is what takes the stuck yellow band off a
+        // section an older build left painted.
+        highlight: false
       });
       if (scrolled === true) return true;
     }
