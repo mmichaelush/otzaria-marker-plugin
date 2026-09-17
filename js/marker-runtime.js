@@ -63,12 +63,154 @@
 
   const logger = createLogger('sdk');
 
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  // ── RPC pacing ─────────────────────────────────────────────────────────────
+  //
+  // Otzaria throttles plugin RPCs with a 50-token bucket
+  // (`PluginBridgeHandler.RateLimiter`) that, on every call, adds
+  // `elapsedSinceLastCall ~/ 10` tokens **and then discards the remainder**.
+  // The consequence is not a gentle slowdown, it is a cliff: a run of calls
+  // spaced less than 10ms apart refills nothing at all, so exactly 50 get
+  // through and every one after that comes back `error.rate_limited` until the
+  // plugin falls silent for a moment.
+  //
+  // Fifty is a small number here. Reading 200 stored highlights is 200 calls;
+  // redrawing them after a cold start is 200 more. It applies to a sequential
+  // `await` loop just as much as to `Promise.all` — a storage read answers in
+  // well under 10ms.
+  //
+  // Every rejected call was silent. A swallowed `storage.get` looks exactly
+  // like a highlight that was never saved, a swallowed `reader.setHighlight`
+  // like a mark the user never made, and a swallowed `ui.showError` is why
+  // there was no error message to go with either.
+  //
+  // So we keep our own copy of the bucket and *wait* instead of being refused.
+  // It is modelled on the host's exactly, discarded remainder included, which
+  // makes our copy drain at least as fast as the real one — we throttle
+  // ourselves a moment before the host would have refused us.
+
+  const HOST_BUCKET_SIZE = 50;
+  const RPC_REFILL_MS = 10;
+  /**
+   * Headroom, because our clock is coarser than the host's.
+   *
+   * `Date.now()` on Windows can sit still for several milliseconds and then
+   * jump. Across a burst that means we sometimes read one gap as 16ms where
+   * the host, timing each call separately in Dart, read sixteen gaps of under
+   * 1ms and credited nothing — so our copy of the bucket can drift a few
+   * tokens optimistic. Starting lower than the host absorbs that drift; the
+   * retry below absorbs whatever is left.
+   */
+  const RPC_CLOCK_HEADROOM = 5;
+  const RPC_BUCKET_SIZE = HOST_BUCKET_SIZE - RPC_CLOCK_HEADROOM;
+  /** Long enough that the host credits a token for the gap (`diff ~/ 10`). */
+  const RPC_WAIT_MS = RPC_REFILL_MS + 5;
+
+  let rpcTokens = RPC_BUCKET_SIZE;
+  let rpcRefilledAt = Date.now();
+
+  function takeRpcToken() {
+    const now = Date.now();
+    // `Math.max` guards a clock that goes backwards — an NTP or DST
+    // correction would otherwise drive the count to a number the wait loop
+    // could not climb out of for an hour, with every call silently blocked.
+    rpcTokens = Math.min(
+      RPC_BUCKET_SIZE,
+      rpcTokens + Math.max(0, Math.floor((now - rpcRefilledAt) / RPC_REFILL_MS))
+    );
+    rpcRefilledAt = now;
+    if (rpcTokens <= 0) return false;
+    rpcTokens -= 1;
+    return true;
+  }
+
+  /**
+   * Waits for a token. Chained so that callers take tokens in the order they
+   * asked — only the *waiting* is serialized, never the calls themselves.
+   */
+  let rpcGate = Promise.resolve();
+
+  function reserveRpcSlot() {
+    const reservation = rpcGate.then(async () => {
+      while (!takeRpcToken()) await sleep(RPC_WAIT_MS);
+    });
+    rpcGate = reservation.then(() => {}, () => {});
+    return reservation;
+  }
+
+  /**
+   * The backstop for the pacing above.
+   *
+   * The host's bucket belongs to the WebView, not to the plugin — one per
+   * `PluginBridgeHandler`, which is one per instance — so our copy is of the
+   * right thing. What it cannot be is exact: it starts counting when this
+   * script loads rather than when the WebView registered, the host charges a
+   * token for calls we never make (an unknown method, a call from an iframe),
+   * and our clock is the coarser of the two. So the refusal has to be
+   * survivable, not merely unlikely.
+   *
+   * Only `error.rate_limited` is retried, and that is deliberate. It is the one
+   * failure the host raises *before running the call at all*, which makes it
+   * safe to repeat for every method, including the ones that send mail or
+   * write a file. A timeout is not retried: there the work may well have
+   * happened.
+   */
+  const RPC_RETRY_BACKOFF_MS = Object.freeze([20, 60, 150, 400, 900]);
+
+  const isRateLimited = response =>
+    response?.error?.code === CODES.rateLimited;
+
   /** The raw envelope — for calls that need `version`/`etag` off a failure. */
   async function callRaw(method, payload) {
     if (!global.Otzaria?.call) {
       return { success: false, data: null, error: { code: CODES.unavailable, message: 'SDK is not injected' } };
     }
-    return global.Otzaria.call(method, payload || {});
+    const params = payload || {};
+    await reserveRpcSlot();
+    let response = await global.Otzaria.call(method, params);
+    for (const backoff of RPC_RETRY_BACKOFF_MS) {
+      if (!isRateLimited(response)) break;
+      // The host refused because too little time had passed. Give it that
+      // time — and empty our own bucket, which was evidently behind.
+      rpcTokens = 0;
+      await sleep(backoff);
+      response = await global.Otzaria.call(method, params);
+    }
+    if (isRateLimited(response)) {
+      logger.warn(`${method} is still rate limited after ${RPC_RETRY_BACKOFF_MS.length} retries`);
+    }
+    return response;
+  }
+
+  /**
+   * `Promise.all` over `items` with at most `limit` in flight.
+   *
+   * Results keep the order of `items`. Unbounded fan-out is what turned a
+   * slow read into a lossy one — see the pacing note above.
+   */
+  async function mapLimit(items, limit, task) {
+    const list = [...items];
+    const results = new Array(list.length);
+    let next = 0;
+    let stopped = false;
+    const worker = async () => {
+      while (next < list.length && !stopped) {
+        const index = next++;
+        try {
+          results[index] = await task(list[index], index);
+        } catch (error) {
+          // Otherwise the surviving workers go on spending RPCs on a result
+          // the caller has already stopped waiting for.
+          stopped = true;
+          throw error;
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.max(1, Math.min(limit, list.length)) }, worker)
+    );
+    return results;
   }
 
   /** Resolves with `data`, or throws `MarkerSdkError`. */
@@ -129,8 +271,8 @@
 
   /**
    * Runs `tasks` one after another. Highlight writes and menu updates share
-   * mutable host state, and the RPC rate limiter is a 50-token bucket, so
-   * firing them in parallel risks both interleaving and `error.rate_limited`.
+   * mutable host state, so firing them in parallel risks interleaving. Pacing
+   * against the host's throttle is `callRaw`'s job, not this one's.
    */
   function createQueue() {
     let tail = Promise.resolve();
@@ -143,6 +285,7 @@
 
   global.MarkerRuntime = Object.freeze({
     CODES, MarkerSdkError, createLogger,
-    call, callRaw, callSoft, notify, protectEvent, on, createQueue
+    call, callRaw, callSoft, notify, protectEvent, on, createQueue,
+    mapLimit, sleep
   });
 })(globalThis);

@@ -14,10 +14,26 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const removeTitle = host => host.contextMenu.get('marker-highlight-actions')
   .children.find(child => child.id === 'marker-remove').title;
 
-// The plugin declares no background instance: host highlights are owned per
-// instance and are erased when that instance is torn down, so the page — which
-// lives as long as its tab — is the only place that may draw them.
+/**
+ * A foreground page on an install where the background permission is off.
+ *
+ * With no background engine to defer to, the page owns the highlights — the
+ * plugin's fallback behaviour, and the shape most of these tests exercise
+ * because it is the one where a single instance both handles clicks and draws.
+ */
 const PAGE_BOOT = { app: { runMode: 'foreground', version: '0.9.97' }, permissions: [] };
+
+/** The real deployment: a headless instance Otzaria keeps alive. */
+const BACKGROUND_BOOT = {
+  app: { runMode: 'background', version: '0.9.97' },
+  permissions: ['app.run_on_startup', 'app.background_keep_alive']
+};
+
+/** A page opened while that background engine is running. */
+const VIEWER_BOOT = {
+  app: { runMode: 'foreground', version: '0.9.97' },
+  permissions: ['app.run_on_startup', 'app.background_keep_alive']
+};
 
 async function bootEngine(options = {}) {
   const host = createHost(options);
@@ -74,6 +90,75 @@ test('the eraser closes the row, so removing needs no second menu', async t => {
   assert.equal(eraser.id, 'mark-clear');
   assert.equal(eraser.icon, 'eraser_24_regular');
   assert.equal(eraser.color, '#00000000', 'an opaque value would paint a black swatch');
+});
+
+/** The eraser rule only engages where selections can actually be watched. */
+const WATCHES_SELECTION = {
+  app: { runMode: 'foreground', version: '0.9.97' },
+  permissions: ['events.subscribe:reader.selection_changed']
+};
+
+const hasEraser = host => host.contextMenu.get('marker-colors')
+  .colors.some(entry => entry.id === 'mark-clear');
+
+/** The debounce is 120ms; this outlasts it without being a slow test. */
+const afterSelection = () => new Promise(resolve => setTimeout(resolve, 220));
+
+test('the eraser appears only over text that already carries a mark', async t => {
+  const host = await bootEngine({ boot: WATCHES_SELECTION });
+  t.after(host.dispose);
+
+  // Nothing has been selected yet, so nothing can be erased.
+  assert.equal(hasEraser(host), false);
+
+  // Selecting clean text keeps it away.
+  await host.emit('reader.selection_changed', selection());
+  await afterSelection();
+  assert.equal(hasEraser(host), false);
+
+  // Marking that same text and selecting it again brings the swatch in.
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+  await host.emit('reader.selection_changed', selection());
+  await afterSelection();
+  assert.equal(hasEraser(host), true);
+
+  // …and it has to leave again. This is the half that was broken: the state
+  // stuck on until the plugin was restarted.
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-clear', selection: selection() });
+  await host.emit('reader.selection_changed', selection());
+  await afterSelection();
+  assert.equal(hasEraser(host), false);
+});
+
+test('a viewer keeps the eraser in step, because the engine never sees a selection', async t => {
+  // `reader.selection_changed` is a broadcast, and
+  // `PluginRuntimeDispatcher._selectEventTargets` gives a broadcast to the
+  // live foreground instances when there are any — the background engine gets
+  // it only when no tab is open. Gating this on `isEngine` meant that with the
+  // plugin tab open nobody updated the menu at all.
+  const host = createHost();
+  t.after(host.dispose);
+  await host.emit('plugin.boot', {
+    app: { runMode: 'foreground', version: '0.9.97' },
+    permissions: ['app.run_on_startup', 'events.subscribe:reader.selection_changed']
+  });
+  assert.equal(host.core.isEngine, false, 'this instance draws nothing');
+
+  await host.emit('reader.selection_changed', selection());
+  await afterSelection();
+  assert.equal(hasEraser(host), false, 'a viewer may still patch the menu');
+});
+
+test('without the selection permission the eraser stays in the row for good', async t => {
+  // Otherwise the rule would read as "never": nothing would ever report a
+  // selection, and removing a mark over a selection would be unreachable.
+  const host = await bootEngine();
+  t.after(host.dispose);
+
+  assert.equal(hasEraser(host), true);
+  await host.emit('reader.selection_changed', selection());
+  await afterSelection();
+  assert.equal(hasEraser(host), true);
 });
 
 test('the eraser removes every mark the selection touches', async t => {
@@ -163,17 +248,68 @@ test('the page patches the declared menu with the user colors', async t => {
   assert.equal(host.contextMenu.get('marker-colors').colors[0].label, 'ים');
 });
 
-test('a background instance would never draw, because its marks die with it', async t => {
+// ── Who draws ───────────────────────────────────────────────────────────────
+
+test('the background instance is the engine, because it outlives every tab', async t => {
   const host = createHost();
   t.after(host.dispose);
-  // The manifest does not create one, but if a future change did, it must not
-  // become the drawer: the host erases an instance's highlights on teardown.
-  await host.emit('plugin.boot', {
-    app: { runMode: 'background', version: '0.9.97' },
-    permissions: []
+  await host.emit('plugin.boot', BACKGROUND_BOOT);
+
+  assert.equal(host.core.isEngine, true);
+});
+
+test('a page draws the stored marks too, because a copy costs nothing', async t => {
+  // `PluginHighlightRegistry.getAllHighlights` de-duplicates on
+  // (ownerPluginId, highlightId), so the same mark held by the page and by the
+  // engine is painted once. Refusing to draw here bought nothing and cost
+  // everything: when no engine was alive, nothing was painted at all.
+  const host = createHost({
+    highlights: [{
+      highlightId: 'marker-kept', bookId: 'בראשית', sectionIndex: 4, colorId: 'green',
+      color: '#8BCF8D', text: 'טקסט', sourceRange: {
+        type: 'text-range-v1', layer: 'source',
+        start: { grapheme: 0, utf16: 0 }, end: { grapheme: 5, utf16: 5 }
+      }
+    }]
+  });
+  t.after(host.dispose);
+  await host.emit('plugin.boot', VIEWER_BOOT);
+
+  assert.equal(host.core.isEngine, false, 'it is still not the engine');
+  assert.equal(host.core.getHighlights().length, 1);
+  assert.equal(host.hostHighlights.size, 1, 'and it still puts them on the page');
+});
+
+test('a viewer edit reaches storage and bumps the counter for the engine', async t => {
+  const host = createHost();
+  t.after(host.dispose);
+  await host.emit('plugin.boot', PAGE_BOOT);
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+  const item = host.core.getHighlights()[0];
+
+  const before = host.storage.get('marker_revision');
+  await host.core.updateHighlight(item, { note: 'לחזור על זה' });
+
+  assert.equal(host.storage.get(`highlight:${item.highlightId}`).note, 'לחזור על זה');
+  assert.notEqual(host.storage.get('marker_revision'), before,
+    'without the bump the other instance never learns the record changed');
+});
+
+test('granting the background permission does not take the marks off the page', async t => {
+  // Ownership decides who *registers* contributions, never who draws. An
+  // earlier version cleared this instance's copies here, which is how a
+  // permission change could empty the book.
+  const host = await bootEngine();
+  t.after(host.dispose);
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+  assert.equal(host.hostHighlights.size, 1);
+
+  await host.emit('plugin.permissions_changed', {
+    permissions: ['reader.highlight', 'app.run_on_startup']
   });
 
   assert.equal(host.core.isEngine, false);
+  assert.equal(host.hostHighlights.size, 1, 'the marks stay on the page');
 });
 
 // ── Applying highlights ─────────────────────────────────────────────────────
@@ -427,6 +563,23 @@ test('an unknown color id is ignored rather than marked with a fallback color', 
   assert.equal(host.hostHighlights.size, 0);
 });
 
+test('...but it says so, and puts the colour row right', async t => {
+  // Otzaria re-registers the manifest's own colour row whenever the plugin's
+  // last instance goes away, so the row on screen can name a colour the user
+  // has since renamed or switched off. Answering that click with silence is
+  // indistinguishable from a plugin that has stopped working — which is
+  // exactly what it was reported as.
+  const host = await bootEngine();
+  t.after(host.dispose);
+  const before = host.callsTo('reader.updateContextMenuItem').length;
+
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-nope', selection: selection() });
+
+  assert.equal(host.callsTo('ui.showMessage').length, 1, 'the user is told');
+  assert.ok(host.callsTo('reader.updateContextMenuItem').length > before,
+    'and the row is refreshed so the next click works');
+});
+
 // ── Removing highlights ─────────────────────────────────────────────────────
 
 test('right-clicking a highlight removes exactly the clicked one', async t => {
@@ -594,7 +747,7 @@ test('boot redraws stored highlights that the host lost on restart', async t => 
   t.after(host.dispose);
 
   assert.equal(host.hostHighlights.size, 1);
-  assert.equal(host.hostHighlights.get('marker-abc').bookId, 'בראשית');
+  assert.equal(host.ownRecords()[0].bookId, 'בראשית');
   assert.equal(host.core.getHighlights()[0].version, 1);
 });
 
@@ -663,8 +816,9 @@ test('a re-anchored section is read back from the host rather than guessed', asy
   await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
   const record = host.core.getHighlights()[0];
   const moved = { start: { utf16: 99 }, end: { utf16: 120 } };
-  host.hostHighlights.get(record.highlightId).range = moved;
-  host.hostHighlights.get(record.highlightId).status = 'stale';
+  const drawn = host.ownRecords().find(entry => entry.highlightId === record.highlightId);
+  drawn.range = moved;
+  drawn.status = 'stale';
 
   await host.emit('reader.sectionContentChanged', {
     changeType: 'source-content', bookId: 'בראשית', sectionIndex: 4
@@ -750,17 +904,55 @@ test('the default-color shortcut marks the live selection', async t => {
   assert.equal(host.core.getHighlights()[0].colorId, host.core.settings.defaultColorId);
 });
 
-test('the reader toolbar button lands on the highlight list', async t => {
+test('the reader toolbar button hides and shows the marks in the open book', async t => {
   const host = await bootEngine();
   t.after(host.dispose);
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+  assert.equal(host.hostHighlights.size, 1);
   const views = [];
   host.core.on('page-opened', param => views.push(param));
 
-  // The button declares openPlugin, so the host opens the page and delivers
-  // the click there; the page must not land on the last-used tab.
-  await host.emit('reader.toolbar_item_clicked', { itemId: 'marker-toolbar', context: 'reader-text' });
+  await host.emit('reader.toolbar_item_clicked', {
+    itemId: 'marker-toolbar', context: 'reader-text', currentBookId: 'בראשית'
+  });
 
-  assert.deepEqual(views.map(view => view.view), ['highlights']);
+  // It must not open the plugin — the whole point is to act where the user is.
+  assert.deepEqual(views, []);
+  assert.equal(host.hostHighlights.size, 0, 'the colours come off the page');
+  assert.equal(host.core.getHighlights().length, 1, 'but nothing is deleted');
+  assert.deepEqual(plain(host.core.mutedBooks), ['בראשית']);
+
+  await host.emit('reader.toolbar_item_clicked', {
+    itemId: 'marker-toolbar', context: 'reader-text', currentBookId: 'בראשית'
+  });
+  assert.equal(host.hostHighlights.size, 1, 'a second click puts them back');
+  assert.deepEqual(plain(host.core.mutedBooks), []);
+});
+
+test('marking in a hidden book un-hides it instead of swallowing the click', async t => {
+  // Hiding is sticky, and a user who hid a book days ago and then marks in it
+  // gets a colour click that does nothing visible and explains nothing. Asking
+  // to mark is as clear a statement as there is that the marks should show.
+  const host = await bootEngine();
+  t.after(host.dispose);
+  await host.core.toggleMutedBook('בראשית');
+  assert.deepEqual(plain(host.core.mutedBooks), ['בראשית']);
+
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+
+  assert.equal(host.core.getHighlights().length, 1);
+  assert.equal(host.hostHighlights.size, 1, 'the new mark is on the page');
+  assert.deepEqual(plain(host.core.mutedBooks), []);
+});
+
+test('the toolbar label says what the next click will do', async t => {
+  const host = await bootEngine();
+  t.after(host.dispose);
+  await host.emit('reader.current_ref_changed', { currentBookId: 'בראשית' });
+
+  assert.match(host.toolbar.get('marker-toolbar').title, /הסתרת/);
+  await host.core.toggleMutedBook('בראשית');
+  assert.match(host.toolbar.get('marker-toolbar').title, /הצגת/);
 });
 
 test('the open-panel shortcut navigates to the plugin page', async t => {
@@ -862,4 +1054,152 @@ test('a report without a reply address does not send an empty one', async t => {
 
   await host.core.sendReport({ details: 'בדיקה', reporterEmail: '' });
   assert.equal('reporterEmail' in host.callsTo('feedback.report')[0].payload, false);
+});
+
+test('a colour changed in the page reaches the reader through the engine', async t => {
+  // The page cannot touch the engine's host records, so the only path from
+  // "the user picked a different colour" to "the mark changed on the page" is
+  // the engine noticing that what is drawn no longer matches what is stored.
+  const host = await bootEngine();
+  t.after(host.dispose);
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+  const item = host.core.getHighlights()[0];
+  const drawn = () => plain([...host.hostHighlights.values()])[0].style.backgroundColor;
+  assert.equal(drawn(), '#8BCF8D');
+
+  // Exactly what a viewer leaves behind: a stored record with a new colour.
+  const stored = host.storage.get(`highlight:${item.highlightId}`);
+  stored.colorId = 'red';
+  stored.color = '#F37E75';
+  stored.style = Object.assign({}, stored.style, { backgroundColor: '#F37E75' });
+  await host.core.loadHighlights();
+
+  await host.core.reconcileHighlights();
+  assert.equal(drawn(), '#F37E75');
+});
+
+test('the Divine Name follows Otzaria unless the plugin is told otherwise', async t => {
+  const host = await bootEngine({ hostSettings: { 'key-replace-holy-names': true } });
+  t.after(host.dispose);
+
+  assert.equal(host.core.displayText('ויאמר יהוה'), 'ויאמר יקוק');
+
+  // The book display is unfiltered, but the list still is not.
+  const strict = await bootEngine({ settings: { holyNames: 'always' } });
+  t.after(strict.dispose);
+  assert.equal(strict.core.displayText('ויאמר יהוה'), 'ויאמר יקוק');
+
+  const off = await bootEngine();
+  t.after(off.dispose);
+  assert.equal(off.core.displayText('ויאמר יהוה'), 'ויאמר יהוה');
+});
+
+test('the toolbar flag is mirrored to the key the manifest gates on', async t => {
+  // `when: { storage: { key: 'marker_toolbar_button' } }` is evaluated by the
+  // host with no plugin code running, so it can only read a whole stored
+  // value — the flag has to live in its own key, not inside the settings.
+  const host = await bootEngine();
+  t.after(host.dispose);
+  assert.equal(host.storage.get('marker_toolbar_button'), true);
+
+  await host.core.saveSettings(Object.assign({}, host.core.settings, { toolbarButton: false }));
+  assert.equal(host.storage.get('marker_toolbar_button'), false);
+});
+
+test('the stored text is what the reader saw, not the remapped source', async t => {
+  // The bug this guards: Otzaria maps the selection back onto the canonical
+  // text through an interpolating mapping, and the highlights list showed a
+  // passage starting several letters before the one the user marked.
+  const host = await bootEngine();
+  t.after(host.dispose);
+
+  await host.emit('contextMenu.colorClicked', {
+    colorId: 'mark-green',
+    selection: selection({
+      renderedSelectedText: 'וא"ת מ"ש שאלה ושכירות',
+      sourceSelectedText: 'נו בשניהם וא"ת מ"ש שא'
+    })
+  });
+
+  assert.equal(host.core.getHighlights()[0].text, 'וא"ת מ"ש שאלה ושכירות');
+});
+
+test('a deletion made in the page takes the mark off the book too', async t => {
+  // The page cannot call `reader.clearHighlight` on a record it does not own,
+  // so a delete there would have left the colour on the text until Otzaria
+  // restarted. The engine has to notice the record is gone from storage.
+  const host = await bootEngine();
+  t.after(host.dispose);
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+  const item = host.core.getHighlights()[0];
+  assert.equal(host.hostHighlights.size, 1);
+
+  // Exactly what a viewer leaves behind: the record is simply gone.
+  host.storage.delete(`highlight:${item.highlightId}`);
+  await host.core.loadHighlights();
+
+  const outcome = await host.core.reconcileHighlights();
+  assert.equal(outcome.removed, 1);
+  assert.equal(host.hostHighlights.size, 0);
+});
+
+test('hiding a book leaves its records alone but takes them off the page', async t => {
+  const host = await bootEngine();
+  t.after(host.dispose);
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+  await host.core.toggleMutedBook('בראשית');
+  assert.equal(host.hostHighlights.size, 0);
+
+  // A later reconcile must not treat "hidden" as "deleted" and draw it back.
+  await host.core.reconcileHighlights();
+  assert.equal(host.hostHighlights.size, 0);
+  assert.equal(host.core.getHighlights().length, 1);
+});
+
+test('the eraser works in the submenu layout too, not only in the colour row', async t => {
+  // `menuStyle: 'submenu'` turns every entry, the eraser included, into an
+  // `item` — so the click arrives as `contextMenu.itemClicked`, not
+  // `contextMenu.colorClicked`. Without a branch for it there, "נקה סימון"
+  // was simply dead for anyone who preferred names to swatches.
+  const host = createHost({ settings: { menuStyle: 'submenu' } });
+  t.after(host.dispose);
+  await host.emit('plugin.boot', PAGE_BOOT);
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+  assert.equal(host.hostHighlights.size, 1);
+
+  await host.emit('contextMenu.itemClicked', {
+    itemId: 'mark-clear', selection: selection()
+  });
+
+  assert.equal(host.core.getHighlights().length, 0, 'the mark is gone from the store');
+  assert.equal(host.hostHighlights.size, 0, 'and off the page');
+});
+
+test('a removal that removed nothing does not report success', async t => {
+  const host = await bootEngine();
+  t.after(host.dispose);
+  await host.emit('contextMenu.colorClicked', { colorId: 'mark-green', selection: selection() });
+  const item = host.core.getHighlights()[0];
+
+  // The mark itself was reported as saved; only what follows is at issue.
+  const successes = host.callsTo('ui.showSuccess').length;
+  const original = host.context.Otzaria.call;
+  host.context.Otzaria.call = async (method, payload) => {
+    if (method === 'reader.clearHighlight') {
+      return {
+        success: false, data: null,
+        error: { schemaVersion: 1, code: 'error.internal', message: 'busy', retryable: false }
+      };
+    }
+    return original(method, payload);
+  };
+
+  await host.emit('contextMenu.itemClicked', {
+    itemId: 'marker-remove',
+    selection: { clickedHighlights: [{ highlightId: item.highlightId, pluginId: 'com.otzaria-marker' }] }
+  });
+
+  assert.equal(host.callsTo('ui.showSuccess').length, successes,
+    'nothing was removed, so nothing new succeeded');
+  assert.equal(host.callsTo('ui.showError').length, 1);
 });

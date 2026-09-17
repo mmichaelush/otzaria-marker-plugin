@@ -48,7 +48,9 @@
   --radius-pill: 999px;
 }
 
-/* גופנים מוזרקים אוטומטית על ידי אוצריא — אין צורך ב-@font-face */
+/* גופנים: גופן הממשק מוזרק על ידי אוצריא, וגופני הקריאה נטענים בזמן ריצה
+   דרך fonts.resolveFamilies (ראו READING_FONTS ב-marker-ui.js). אין כאן
+   הצהרות גופן ואין קובצי גופן בתוסף. */
 
 * { box-sizing: border-box; }
 html, body { height: 100%; overflow-y: auto; overflow-x: hidden; }
@@ -874,14 +876,23 @@ body .highlights-list[data-view="tiles"] .highlight-card { overflow: visible; }
   z-index: 100;
 }
 .color-picker-details[open] .color-picker-popover { transform: translate(-50%, -50%); }
-.color-picker-popover::before {
-  content: 'בחירת גוון';
-  display: block;
+/* The heading is a real element (`.picker-popover-head`), not a pseudo-element
+   with the Hebrew baked into `content` — that copy could never be translated,
+   and it left no room for the close button. */
+.picker-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--color-outline-variant);
-  color: var(--color-on-surface);
-  font-size: .86em;
-  font-weight: 800;
+}
+
+.picker-close-btn {
+  flex: none;
+  inline-size: 30px;
+  block-size: 30px;
+  margin-inline-end: -4px;
 }
 
 select {
@@ -1109,7 +1120,7 @@ option { background: var(--color-surface-container-highest); color: var(--color-
   background: var(--color-surface-container-highest);
   box-shadow: var(--shadow-lg);
 }
-.picker-popover-title { color: var(--color-on-surface); font-size: .8em; font-weight: 800; }
+.picker-popover-title { color: var(--color-on-surface); font-size: .86em; font-weight: 800; }
 .preset-swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
 .preset-swatch { inline-size: 24px; block-size: 24px; padding: 0; border: 2px solid transparent; border-radius: var(--radius-sm); background: var(--swatch); box-shadow: var(--border-inset); }
 .preset-swatch:hover:not(:disabled) { background: var(--swatch); background-image: none; transform: scale(1.1); border-color: var(--color-on-surface); }
@@ -1956,12 +1967,22 @@ body {
   padding-inline: 20px;
 }
 
+/* The notice belongs in this list too. Left out of it, it ran the full width
+   of the scroll area while the card above it stopped at 1180px and centred —
+   on a wide window the banner visibly overhung the page it belongs to. */
 .app-content > .plugin-intro,
+.app-content > .engine-notice,
 .app-content > .tabs,
 .app-content > .tab-panel {
   width: 100%;
   max-width: 1180px;
   margin-inline: auto;
+}
+
+/* The intro card leaves 16px below it, and the tab bar is sticky with no top
+   margin of its own — without this the banner was wedged against both. */
+.app-content > .engine-notice {
+  margin-block: 0 18px;
 }
 
 .plugin-intro {
@@ -2934,8 +2955,123 @@ textarea,
 
 .card.accent-language { --section-accent: color-mix(in srgb, var(--color-secondary) 55%, var(--color-primary)); }
 .card.accent-about { --section-accent: var(--color-primary); }
+.card.accent-links { --section-accent: color-mix(in srgb, var(--color-secondary) 70%, var(--color-primary)); }
+.card.accent-integration { --section-accent: var(--color-secondary); }
 .card.accent-support { --section-accent: color-mix(in srgb, var(--color-primary) 55%, var(--color-error)); }
 .card.accent-help { --section-accent: var(--color-outline); }
+
+.about-lede {
+  margin: 0;
+  padding: 12px 16px 0;
+  color: var(--color-on-surface);
+  font-size: .92em;
+  line-height: 1.6;
+}
+
+.about-bullets {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 16px 4px;
+  list-style: none;
+}
+
+.about-bullets li {
+  display: grid;
+  gap: 2px;
+  padding-inline-start: 12px;
+  border-inline-start: 3px solid var(--section-accent, var(--color-outline-variant));
+  border-radius: var(--radius-sm);
+}
+
+.about-bullets strong {
+  color: var(--color-on-surface);
+  font-size: .86em;
+}
+
+.about-bullets span {
+  color: var(--color-on-surface-variant);
+  font-size: .84em;
+  line-height: 1.55;
+}
+
+/* One row per thing the plugin adds outside its own page. The control sits at
+   the end of the row whatever it is — a switch or a one-shot button — so the
+   column of explanations stays readable as a column. */
+.switch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 16px 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-container-low);
+}
+
+.switch-row[hidden] { display: none; }
+
+.switch-label {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 3px;
+  min-inline-size: 0;
+  cursor: default;
+  font-size: .88em;
+}
+
+.switch-label small {
+  color: var(--color-on-surface-variant);
+  font-size: .86em;
+  line-height: 1.5;
+}
+
+label.switch-label { cursor: pointer; }
+
+/* A checkbox drawn as a track and a knob. `appearance: none` leaves an inert
+   box, so every visual is declared here — including the focus ring, which the
+   native control would otherwise have owned. */
+.switch-input {
+  position: relative;
+  flex: 0 0 auto;
+  inline-size: 44px;
+  block-size: 24px;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 1px solid var(--color-outline);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-container-highest);
+  appearance: none;
+  cursor: pointer;
+  transition: background-color .18s ease, border-color .18s ease;
+}
+
+.switch-input::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 3px;
+  inset-inline-start: 3px;
+  inline-size: 16px;
+  block-size: 16px;
+  border-radius: var(--radius-pill);
+  background: var(--color-outline);
+  transition: inset-inline-start .18s ease, background-color .18s ease;
+}
+
+.switch-input:checked {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+}
+
+.switch-input:checked::after {
+  inset-inline-start: 23px;
+  background: var(--color-on-primary);
+}
+
+.switch-input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
 
 .about-grid {
   display: grid;

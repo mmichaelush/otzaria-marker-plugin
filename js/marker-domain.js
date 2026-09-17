@@ -16,6 +16,30 @@
 
   const SETTINGS_KEY = 'marker_settings';
   const HIGHLIGHT_PREFIX = 'highlight:';
+  /**
+   * Keys that live outside `marker_settings`, each for a reason.
+   *
+   * `TOOLBAR_FLAG_KEY` is read by the **host**, not by the plugin: the
+   * manifest gates the reader toolbar button on
+   * `when: { storage: { key: 'marker_toolbar_button' } }`, and that condition
+   * can only compare a whole stored value — it cannot look inside the settings
+   * object. Writing the flag to its own key is what lets the button appear and
+   * disappear without waking the plugin at all.
+   *
+   * `REVISION_KEY` is the handshake between every live instance — including
+   * the ones in other Otzaria windows, which are separate processes with
+   * separate registries and only this SQLite store in common. Each writes a
+   * fresh token after it changes anything and watches the key for a token it
+   * did not write.
+   *
+   * `MUTED_BOOKS_KEY` survives the engine being evicted, so "highlights hidden
+   * in this book" is still true after the background instance is restarted —
+   * and it is shared, so hiding a book hides it in every window.
+   */
+  const TOOLBAR_FLAG_KEY = 'marker_toolbar_button';
+  const REVISION_KEY = 'marker_revision';
+  const MUTED_BOOKS_KEY = 'marker_muted_books';
+  const MAX_MUTED_BOOKS = 200;
 
   /**
    * The host allows a color row 1-12 entries and a plugin 2 top-level menu
@@ -67,6 +91,7 @@
 
   const COMMAND_HIGHLIGHT_DEFAULT = 'marker.highlightDefault';
   const COMMAND_OPEN_PANEL = 'marker.openPanel';
+  const COMMAND_TOGGLE_BOOK = 'marker.toggleBook';
 
   /**
    * `metadata.source` on a highlight is a **closed set** in the host
@@ -136,6 +161,20 @@
     'KeterYG', 'Shofar', 'NotoSerifHebrew', 'NotoRashiHebrew', 'Tinos', 'Rubik'
   ]);
   const RTL_LANGUAGES = Object.freeze(['he', 'ar', 'fa', 'ur', 'yi']);
+  /**
+   * When the plugin substitutes the Divine Name in the text it shows.
+   *
+   * `auto` follows Otzaria's own display setting, which is what a reader
+   * expects: the plugin shows the same text the book shows. `always` is for a
+   * reader whose book display is unfiltered but who still does not want the
+   * Name written out in a list, an export or a printout.
+   */
+  const HOLY_NAME_MODES = Object.freeze(['auto', 'always', 'never']);
+  /** The two substitutions Otzaria itself offers (`HolyNameStyle`). */
+  const HOLY_NAME_STYLES = Object.freeze(['kuf', 'heh']);
+  /** Otzaria's settings keys for the same two choices. */
+  const HOST_HOLY_NAME_KEY = 'key-replace-holy-names';
+  const HOST_HOLY_NAME_STYLE_KEY = 'key-holy-name-style';
 
   const DEFAULT_SETTINGS = Object.freeze({
     schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -151,6 +190,9 @@
     menuStyle: 'buttonRow',
     language: 'auto',
     autoBackup: true,
+    holyNames: 'auto',
+    /** The reader toolbar button — mirrored to `TOOLBAR_FLAG_KEY` on save. */
+    toolbarButton: true,
     // Remembered between sessions. Filters and the search box deliberately are
     // not: reopening to an empty list because of a filter set last week reads
     // as data loss.
@@ -304,21 +346,118 @@
   }
 
   /**
-   * Which instance draws the highlights.
+   * Whether a silent background engine can exist on this install.
    *
-   * **The plugin deliberately runs no background instance.** Host highlights
-   * are owned per *instance*, not per plugin: when an instance is disposed the
-   * host calls `removeInstance` and every mark it drew is erased from the
-   * reader. A lazily-woken background instance is torn down a few minutes
-   * after it goes idle — so anything it drew disappears with it, and the page
-   * cannot clear or update records it does not own.
+   * It is the whole reason the marks survive with the plugin tab closed, and
+   * it is a permission the user can switch off — so every branch that assumes
+   * a background engine has to ask here first.
+   */
+  function backgroundEngineAllowed(bootContext) {
+    return hasPermission(bootContext?.permissions, 'app.run_on_startup');
+  }
+
+  /**
+   * Whether this instance is the plugin's engine.
    *
-   * With one instance, ownership is never ambiguous and every mark lives
-   * exactly as long as the instance that drew it. See
-   * `docs/ARCHITECTURE.md` § בעלות על ההדגשות.
+   * **This does not decide who draws** — every instance draws, because the
+   * host paints the union of all instances' records de-duplicated by
+   * highlight id. It decides who may *register* a contribution that is not
+   * already in the manifest: a fresh `addContextMenuItem` binds to the calling
+   * instance, so only the instance that outlives the others should ever do it.
+   * That instance is the background engine
+   * (`contributes.background.entrypoint`, kept alive by
+   * `startup.keepAlive`), which is also where Otzaria routes every
+   * contribution click (`preferBackground: true`) — the thing that stops a
+   * click on a colour from opening the plugin tab.
+   *
+   * With no `app.run_on_startup` permission there is no background engine, so
+   * a page is the closest thing to one and takes the role.
+   *
+   * See `docs/ARCHITECTURE.md` § בעלות על ההדגשות.
    */
   function ownsEngine(bootContext) {
-    return bootContext?.runMode !== 'background';
+    if (bootContext?.runMode === 'background') return true;
+    return !backgroundEngineAllowed(bootContext);
+  }
+
+  // ── The Divine Name ────────────────────────────────────────────────────────
+  //
+  // Ported from Otzaria's own `replaceHolyNames` (`lib/utils/text/
+  // text_manipulation.dart`) so the plugin shows a marked verse exactly as the
+  // book shows it. Keeping the rule here rather than in the rendering code is
+  // what lets the tests state what must *not* be substituted.
+
+  /** The Tetragrammaton with its marks, each run of marks captured. */
+  const HOLY_NAME_PATTERN = /י(\p{Mn}*)ה(\p{Mn}*)ו(\p{Mn}*)ה(\p{Mn}*)/gu;
+  const COMBINING_MARK = /\p{Mn}/u;
+  const HEBREW_LETTER = /[א-ת]/;
+
+  /**
+   * Whether the match is the tail of a longer word, in which case it is not
+   * the Name — "ויגביהוהו" is the example Otzaria documents. Marks are skipped
+   * rather than counted, so "לַֽיהֹוָֽה" is still caught.
+   */
+  function hasThreeHebrewLettersBefore(text, matchStart) {
+    let letters = 0;
+    for (let index = matchStart - 1; index >= 0; index -= 1) {
+      const character = text[index];
+      if (COMBINING_MARK.test(character)) continue;
+      if (HEBREW_LETTER.test(character)) {
+        letters += 1;
+        if (letters >= 3) return true;
+        continue;
+      }
+      return false;
+    }
+    return false;
+  }
+
+  /**
+   * `kuf` keeps the marks and swaps the letters (יקוק); `heh` collapses the
+   * whole word, marks included, to ה'.
+   */
+  function replaceHolyNames(value, style) {
+    const text = String(value ?? '');
+    if (!text) return text;
+    const chosen = HOLY_NAME_STYLES.includes(style) ? style : HOLY_NAME_STYLES[0];
+    return text.replace(HOLY_NAME_PATTERN, (match, first, second, third, fourth, offset) => {
+      if (hasThreeHebrewLettersBefore(text, offset)) return match;
+      return chosen === 'heh' ? "ה'" : `י${first}ק${second}ו${third}ק${fourth}`;
+    });
+  }
+
+  /**
+   * The policy to apply, from the plugin's own preference and Otzaria's.
+   * `hostSetting` is `{ replace, style }` as read from `settings.getMany`.
+   */
+  function resolveHolyNamePolicy(mode, hostSetting) {
+    const style = HOLY_NAME_STYLES.includes(hostSetting?.style)
+      ? hostSetting.style
+      : HOLY_NAME_STYLES[0];
+    if (mode === 'never') return { enabled: false, style };
+    if (mode === 'always') return { enabled: true, style };
+    return { enabled: hostSetting?.replace === true, style };
+  }
+
+  /** Text as the plugin should display it. Safe to call on anything. */
+  function applyHolyNamePolicy(value, policy) {
+    const text = String(value ?? '');
+    return policy?.enabled ? replaceHolyNames(text, policy.style) : text;
+  }
+
+  /** Books whose marks the user has hidden for now, normalized for storage. */
+  function normalizeMutedBooks(value) {
+    const list = Array.isArray(value) ? value : [];
+    const unique = [];
+    for (const entry of list) {
+      const bookId = safeHighlightText(entry).slice(0, 500);
+      if (bookId && !unique.includes(bookId)) unique.push(bookId);
+    }
+    // Trimmed from the front, because `setMuted` appends. Stopping at the cap
+    // instead discarded the book the user had just asked to hide: `isMuted`
+    // stayed false while the marks were cleared off the page, the toast said
+    // "hidden", and the toolbar label said the opposite of the state.
+    return unique.slice(-MAX_MUTED_BOOKS);
   }
 
   // ── Settings ───────────────────────────────────────────────────────────────
@@ -364,6 +503,8 @@
     settings.menuStyle = settings.menuStyle === 'submenu' ? 'submenu' : 'buttonRow';
     settings.language = LANGUAGES.includes(settings.language) ? settings.language : 'auto';
     settings.autoBackup = settings.autoBackup !== false;
+    settings.holyNames = HOLY_NAME_MODES.includes(settings.holyNames) ? settings.holyNames : 'auto';
+    settings.toolbarButton = settings.toolbarButton !== false;
 
     const view = Object.assign({}, DEFAULT_SETTINGS.view, settings.view || {});
     view.sort = SORT_MODES.includes(view.sort) ? view.sort : 'newest';
@@ -430,10 +571,11 @@
    * `null` when no color is enabled — the caller keeps the previous menu rather
    * than registering an empty one, which the Host rejects.
    */
-  function buildColorMenuPayload(settings, translate = value => value) {
+  function buildColorMenuPayload(settings, translate = value => value, { withClear = true } = {}) {
     const colors = enabledColors(settings);
     if (!colors.length) return null;
     const title = safeMenuText(translate('מרקר'));
+    const clear = withClear ? [clearMenuEntry(translate)] : [];
     if (settings.menuStyle === 'submenu') {
       return {
         id: MENU_COLORS_ID,
@@ -448,7 +590,7 @@
             title: safeMenuText(translate(color.label)),
             icon: 'highlight_24_regular'
           })),
-          clearMenuEntry(translate)
+          ...clear
         ]
       };
     }
@@ -469,7 +611,7 @@
           // which reads as a rendering artifact rather than "this is your
           // default colour".
         })),
-        clearMenuEntry(translate)
+        ...clear
       ]
     };
   }
@@ -525,23 +667,44 @@
     };
   }
 
-  function buildToolbarPayload(translate = value => value) {
+  /**
+   * The reader toolbar button.
+   *
+   * It no longer opens the plugin: with a background engine the click is
+   * delivered silently, and the useful thing to do with one click while
+   * reading is to take the colours off the page for a moment — the list of
+   * highlights is a tab away and a keyboard shortcut away. The label always
+   * says what the next click will do.
+   */
+  function buildToolbarPayload(translate = value => value, { muted = false } = {}) {
+    // Two separate `translate('…')` calls, not one call on a conditional: the
+    // i18n extractor reads literals at the call site, and a ternary inside the
+    // parentheses would hide both strings from the catalog check.
+    const title = muted
+      ? translate('מרקר — הצגת ההדגשות בספר הזה')
+      : translate('מרקר — הסתרת ההדגשות בספר הזה');
     return {
       id: TOOLBAR_ITEM_ID,
       type: 'button',
-      title: safeMenuText(translate('מרקר — ניהול ההדגשות')),
-      icon: 'highlight_24_regular',
+      title: safeMenuText(title),
+      icon: muted ? 'highlight_24_regular' : 'highlight_24_filled',
       contexts: ['reader-text'],
-      openPlugin: true
+      // The same gate the manifest declares. It only matters on the fallback
+      // `addToolbarItem` path — taken when the declarative registration is
+      // gone — which would otherwise put the control back on the toolbar of a
+      // user who had switched it off.
+      when: { storage: { key: TOOLBAR_FLAG_KEY, notEquals: false } }
     };
   }
 
   /** Cheap equality key: skip the menu RPC when nothing visible changed. */
-  function menuSignature(settings, language) {
+  function menuSignature(settings, language, { withClear = true, muted = false } = {}) {
     return JSON.stringify([
       language || 'he',
       settings?.menuStyle,
       settings?.defaultColorId,
+      withClear,
+      muted,
       enabledColors(settings).map(color => [color.id, toSafeHex(color.hex), color.label])
     ]);
   }
@@ -662,9 +825,29 @@
     return !!a && !!b && a.start < b.end && b.start < a.end;
   }
 
+  /**
+   * The words the user actually saw themselves select.
+   *
+   * **`renderedSelectedText` first, and that ordering is the fix for a real
+   * bug.** Otzaria hands over two versions of the selection: the rendered one,
+   * sliced straight out of the text on screen with the offsets the user
+   * dragged, and the source one, sliced out of the canonical text after
+   * mapping those offsets through `TextSourceMapService`. That mapping is
+   * exact only inside runs that survived rendering unchanged; across a run
+   * that was rewritten — vowels or cantillation stripped, the Divine Name
+   * substituted, punctuation dropped — it interpolates proportionally
+   * (`sourceStart + (sourceLength * progress).round()`) and lands a few
+   * characters off.
+   *
+   * The mark itself still looks right, because drawing maps the same offsets
+   * back the same way and the error cancels. What did not cancel was this
+   * string: it was stored, and the highlights list showed the user a passage
+   * starting ten letters before the one they had marked. Taking the rendered
+   * text removes the round trip entirely.
+   */
   function selectedTextOf(selection) {
-    return String(selection?.sourceSelectedText
-      || selection?.renderedSelectedText
+    return String(selection?.renderedSelectedText
+      || selection?.sourceSelectedText
       || selection?.text
       || selection?.selectedText
       || '');
@@ -712,6 +895,34 @@
 
   function hasUsableSelection(selection) {
     return Boolean(bookIdOf(selection)) && selectionTargets(selection).length > 0;
+  }
+
+  /**
+   * Whether the selection the reader just reported sits on a mark of ours.
+   *
+   * **`reader.selection_changed` does not carry an anchor.** Its payload is the
+   * legacy shape — `text`, `currentBookId`, `currentIndex` and the book
+   * identity, and nothing else. `selectionTargets` therefore returns nothing
+   * for it, an overlap test has no ranges to compare, and the answer was
+   * always "no": the eraser never appeared over marked text at all.
+   *
+   * So the test is section-level when that is all the payload supports, which
+   * is also how the request was phrased — "only on a section that has a mark
+   * in it". When a caller does pass a fully anchored selection (the
+   * context-menu payload, or a future host that enriches this event), the
+   * exact overlap is used instead, because it is strictly better.
+   */
+  function selectionTouchesHighlight(all, selection) {
+    const bookId = bookIdOf(selection);
+    if (!bookId) return false;
+    const targets = selectionTargets(selection);
+    if (targets.length) {
+      return highlightsOverlappingTargets(all, bookId, targets).length > 0;
+    }
+    const sectionIndex = sectionIndexOf(selection);
+    if (!Number.isInteger(sectionIndex) || sectionIndex < 0) return false;
+    return (all || []).some(item =>
+      item.bookId === bookId && item.sectionIndex === sectionIndex);
   }
 
   function clickedHighlightIds(selection, pluginId) {
@@ -918,9 +1129,16 @@
     return String(a || '').localeCompare(String(b || ''), 'he', { numeric: true });
   }
 
-  function highlightHaystack(item, colorLabel) {
+  /**
+   * `displayed` is the text as the card shows it, which differs from the
+   * stored text whenever the Divine Name is substituted. Both are searchable
+   * on purpose: a reader who sees "יקוק" on the card will type that, and a
+   * reader who remembers the book's own spelling will type the other.
+   */
+  function highlightHaystack(item, colorLabel, displayed) {
     return normalizeSearchText([
-      item.text, item.note, item.tags.join(' '), item.book, item.bookId, item.ref, colorLabel
+      item.text, displayed || '', item.note, item.tags.join(' '),
+      item.book, item.bookId, item.ref, colorLabel
     ].join(' '));
   }
 
@@ -938,14 +1156,15 @@
     }
   }
 
-  function filterHighlights(all, filters, colorLabelOf) {
+  function filterHighlights(all, filters, colorLabelOf, displayTextOf = value => value) {
     const query = normalizeSearchText(filters?.query);
     return all.filter(item => {
       if (filters?.bookId && filters.bookId !== 'all' && item.bookId !== filters.bookId) return false;
       if (filters?.colorId && filters.colorId !== 'all' && item.colorId !== filters.colorId) return false;
       if (filters?.tag && filters.tag !== 'all' && !item.tags.includes(filters.tag)) return false;
       if (!matchesStatus(item, filters?.status)) return false;
-      if (query && !highlightHaystack(item, colorLabelOf(item.colorId)).includes(query)) return false;
+      if (query && !highlightHaystack(item, colorLabelOf(item.colorId), displayTextOf(item.text))
+        .includes(query)) return false;
       return true;
     });
   }
@@ -1061,6 +1280,9 @@
   global.MarkerDomain = Object.freeze({
     SETTINGS_SCHEMA_VERSION, BACKUP_SCHEMA_VERSION, HOST_TARGET_VERSION,
     SETTINGS_KEY, HIGHLIGHT_PREFIX,
+    TOOLBAR_FLAG_KEY, REVISION_KEY, MUTED_BOOKS_KEY, MAX_MUTED_BOOKS,
+    HOLY_NAME_MODES, HOLY_NAME_STYLES,
+    HOST_HOLY_NAME_KEY, HOST_HOLY_NAME_STYLE_KEY,
     MAX_COLORS, MAX_MENU_COLORS, MAX_TAGS_PER_HIGHLIGHT, HIGHLIGHTS_PAGE_SIZE,
     MAX_NOTE_LENGTH, MAX_NOTE_HTML_LENGTH,
     MENU_COLORS_ID, MENU_HIGHLIGHT_ID, MENU_REMOVE_ID, MENU_NOTE_ID,
@@ -1068,7 +1290,7 @@
     CLEAR_COLOR_ID, CLEAR_COLOR_VALUE, clearMenuEntry,
     safeHighlightText, safeMenuText,
     SELECTION_CONTEXTS, HIGHLIGHT_CONTEXTS, LEGACY_MENU_IDS,
-    COMMAND_HIGHLIGHT_DEFAULT, COMMAND_OPEN_PANEL,
+    COMMAND_HIGHLIGHT_DEFAULT, COMMAND_OPEN_PANEL, COMMAND_TOGGLE_BOOK,
     HIGHLIGHT_SOURCES, HIGHLIGHT_SOURCE, MAX_METADATA_TAGS, MAX_METADATA_TAG_LENGTH,
     MARKER_MODES, VIEW_MODES, EXPORT_FORMATS, LANGUAGES, FONT_CHOICES,
     SORT_MODES, GROUP_MODES, TABS, STATUS_FILTERS,
@@ -1077,7 +1299,8 @@
     structuredCloneSafe, sanitizeParsed, escapeHtml, escapeMarkdownBlocks,
     clamp, hexToRgba, toSafeHex,
     compareHostVersions, hasPermission, directionForLanguage,
-    normalizeBootContext, ownsEngine,
+    normalizeBootContext, ownsEngine, backgroundEngineAllowed,
+    replaceHolyNames, resolveHolyNamePolicy, applyHolyNamePolicy, normalizeMutedBooks,
     normalizeSettings, enabledColors, findColor, defaultColor,
     colorItemId, colorIdFromItemId, buildColorMenuPayload, buildHighlightMenuPayload,
     buildToolbarPayload, menuSignature,
@@ -1087,6 +1310,7 @@
     rangeBounds, rangesOverlap, selectedTextOf, normalizeSourceRange,
     MAX_ANCHOR_EXACT_TEXT, MAX_ANCHOR_CONTEXT, MAX_ANCHOR_BYTES, sectionIndexOf, bookIdOf, bookTitleOf,
     selectionTargets, hasUsableSelection, clickedHighlightIds,
+    selectionTouchesHighlight,
     buildHighlightStyle, buildHighlightMetadata,
     makeHighlightId, isSafeHighlightId, highlightKey,
     normalizeHighlight, isStale, hasNote, expandByGroup, highlightsOverlappingTargets,

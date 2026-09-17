@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "com.otzaria-marker",
   "name": "מרקר",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "סימון טקסט בצבעים מתפריט מקש ימני וניהול כל ההדגשות בצורה נוחה במקום אחד.",
   "author": "מיכאלוש",
   "homepage": "https://github.com/mmichaelush/otzaria-marker-plugin",
@@ -15,15 +15,20 @@
     "app.open_url",
     "app.shortcuts",
     "app.startup_contributions",
+    "app.run_on_startup",
+    "app.background_keep_alive",
     "navigation.write",
     "reader.context_menu",
     "reader.highlight",
     "reader.open",
     "reader.toolbar",
+    "settings.read",
     "ui.create_shortcut",
     "fs.user_files.read",
     "fs.user_files.write",
     "events.subscribe:reader.sectionContentChanged",
+    "events.subscribe:reader.selection_changed",
+    "events.subscribe:reader.current_ref_changed",
     "events.subscribe:settings.changed",
     "events.subscribe:plugin.permissions_changed"
   ],
@@ -38,7 +43,16 @@
       "defaultPinned": true,
       "iconName": "highlight_24_regular"
     },
+    "background": {
+      "entrypoint": "background.html"
+    },
     "startup": {
+      "keepAlive": true,
+      "activationEvents": [
+        "app.startup",
+        "reader.current_ref_changed",
+        "reader.sectionContentChanged"
+      ],
       "contextMenuItems": [
         {
           "id": "marker-colors",
@@ -80,10 +94,12 @@
         {
           "id": "marker-toolbar",
           "type": "button",
-          "title": "מרקר — ניהול ההדגשות",
-          "icon": "highlight_24_regular",
+          "title": "מרקר — הסתרת ההדגשות בספר הזה",
+          "icon": "highlight_24_filled",
           "contexts": ["reader-text"],
-          "openPlugin": true
+          "when": {
+            "storage": { "key": "marker_toolbar_button", "notEquals": false }
+          }
         }
       ],
       "shortcuts": [
@@ -98,6 +114,12 @@
           "label": "מרקר: פתיחת רשימת ההדגשות",
           "key": "ctrl+alt+m",
           "command": "marker.openPanel"
+        },
+        {
+          "id": "marker-toggle-book",
+          "label": "מרקר: הצגה או הסתרה של ההדגשות בספר הזה",
+          "key": "ctrl+alt+j",
+          "command": "marker.toggleBook"
         }
       ]
     }
