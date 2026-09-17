@@ -32,7 +32,9 @@
 | `js/marker-richtext.js` | עורך ההערות, הליכה על ה-DOM לסינון | SDK, מדיניות סינון משלו |
 | `js/marker-core.js` | הגדרות, הדגשות, תרומות, גיבוי, דיווח, lifecycle | DOM |
 | `js/marker-ui.js` | rendering, טפסים, דיאלוגים | קריאת SDK ישירה, כללי דומיין |
+| `js/marker-background.js` | הפעלת המנוע ב-`background.html` ותו לא | כל דבר אחר |
 | `index.html` | מבנה ונגישות | inline event handlers, לוגיקה |
+| `background.html` | טעינת domain → i18n → en.js → runtime → core → background | DOM, CSS, UI |
 | `css/style.css` | תפקידי צבע ו-radius tokens של אוצריא | צבע קשיח, CDN, `@import` |
 
 הגבולות נאכפים ב-`test/compatibility.test.js`. אל תעקפו את הבדיקה — תקנו את הקוד.
@@ -52,14 +54,86 @@
   של שדות, ערכים סגורים וטווחים ב-`setHighlight`, `updateHighlight`,
   `addContextMenuItem` ו-`addToolbarItem`. אל תרפו את הוולידציה כדי "לעבור
   בדיקה" — היא הדבר היחיד שתופס payload שהמארח האמיתי ידחה.
-- **אין מופע רקע, וזו החלטה.** אוצריא מוחקת את ההדגשות של מופע כשהוא נסגר
-  (`PluginBridgeAdapter.dispose` → `PluginHighlightRegistry.removeInstance`),
-  ולכן מופע רקע ארעי היה מוחק בעצמו כל סימון שצייר. אל תחזירו
-  `app.run_on_startup` בלי לפתור קודם את בעלות ההדגשות ואת מחיקתן מהדף.
+- **מי שמצייר חייב להיות מסוגל גם למחוק — וזה הכלל, לא "מי הבעלים".**
+  אוצריא קוראת `controller.pause()` על לשונית תוסף ברגע שהמשתמש חוזר לספר,
+  ולכן דף קפוא אינו יכול לגעת במה שצייר; ו-`clearAllHighlights` מוגבלת למופע
+  הקורא, ולכן אף אחד אחר לא יכול לגעת בזה במקומו. מכאן:
+  - **המנוע מצייר את כל המאגר.** הוא לעולם אינו מושהה.
+  - **דף עם מנוע מאחוריו (`isEngine === false`) אינו מצייר את המאגר** —
+    העותקים שלו נראים בדיוק כשהוא קפוא, וזה מה ששבר את הסתרת ההדגשות בספר.
+  - **דף בלי מנוע (`isEngine === true`) מצייר הכול**, כי אין מי שיצייר.
+  - **לחיצה שהגיעה לדף מצוירת בדף תמיד.** ניתוב עם `preferBackground: true`
+    אומר שאם הלחיצה הגיעה לדף — אין מנוע חי, והדף הוא היחיד שיכול.
+  `getAllHighlights` עושה dedup לפי `(ownerPluginId, highlightId)`, ולכן
+  עותק כפול הוא זול; מה שאינו זול הוא עותק שאיש אינו יכול להסיר.
+  `ownsEngine` מחליט גם מי רשאי **לרשום** תרומה חדשה.
+- **`reconcileHighlights` מנקה, לא מדלג.** מה שהמופע הזה מצייר ואינו ב-
+  `shouldDraw` (נמחק במקום אחר, או שהספר הוסתר) יורד מהדף. דילוג על ספר מושתק
+  במקום ניקוי הוא הסיבה שהסתרה פעלה רק במופע שקיבל את הלחיצה.
+- **קריאה שנכשלה אינה אחסון ריק — וזו אינה הערת סגנון.** `storage.list`
+  שנכשל והוחזר כ-`[]` רוקן את רשימת ההדגשות, ו-`reconcileHighlights` מחק
+  בנאמנות את כל מה שהיה מצויר בספר. `loadHighlights` שומר את מה שכבר היה ביד,
+  מסמן `storeComplete=false`, וסבב הניקוי מוותר עד קריאה שלמה. אל תחזירו ברירת
+  מחדל ריקה מקריאת אחסון.
+  **ולכלל הזה יש חצי שני:** `pollRevision` חייב לנסות שוב כל עוד
+  `storeComplete` הוא `false`, גם כשהאסימון לא זז. בלי זה הסירוב למחוק רק הפך
+  את הנזק לקבוע — הרשומה נשארה חסרה מהרשימה ומהדף עד הפעלה מחדש.
+- **כל רצף קריאות חייב לעבור דרך `callRaw` ולכבד את קצב המארח.** מגביל הקצב
+  של אוצריא נותן 50 קריאות ואז מסרב לכל השאר כל עוד הפערים קטנים מ-10ms —
+  גם בלולאת `await`, לא רק ב-`Promise.all` (הפירוט ב-`docs/ARCHITECTURE.md`).
+  אל תוסיפו `Promise.all` על רשימה שאורכה נקבע בידי המשתמש; יש
+  `MarkerRuntime.mapLimit`. ואל תרחיבו את הניסיון החוזר מעבר ל-
+  `error.rate_limited` — רק הוא מובטח כ"לא רץ בכלל".
+- **`callSoft` על פעולה שהמשתמש ביקש הוא באג.** בליעה שקטה של כישלון היא
+  בדיוק מה שהופך תקלה זמנית ל"התוסף לא מגיב": אין סימון, אין מחיקה, ואין
+  הודעה. כל מסלול שמתחיל בלחיצה של משתמש חייב להסתיים בסימון, במחיקה או
+  בהודעה שמסבירה למה לא.
+- **`version` ו-`etag` לא נכתבים לאחסון.** הם של העותק של מופע מסוים; שמירתם
+  גרמה לשני חלונות לדרוס זה את זה בכל סבב דגימה.
+- **ל-`reader.selection_changed` אין עוגן.** ה-payload הוא הצורה הישנה
+  (`text`, `currentBookId`, `currentIndex`) בלי `sourceRange` ובלי
+  `sections`. אל תריצו עליו `selectionTargets` ותצפו לתשובה —
+  `selectionTouchesHighlight` הוא השער, והוא נופל לרמת מקטע כשאין טווחים.
+- **`reader.revealHighlight` היא per-instance.** רק המופע שצייר את הרשומה
+  רשאי לבקש אותה. מהדף חובה לפתוח ואז `reader.scrollToSection` —
+  `openBookAtRef` מנווט ל-ref (פרק/סימן) ולא לשורה.
+- **הדף והמנוע מדברים רק דרך `REVISION_KEY`.** אין ערוץ הודעות בין מופעים.
+  כל כתיבה שהצד השני צריך לראות חייבת להסתיים ב-`bumpRevision()`; כל קריאה
+  מחדש עוברת ב-`pollRevision()`. ו-`bumpRevision` **קוראת לפני שהיא כותבת**:
+  כתיבה היא הצהרה "אני מעודכן", ומופע שלא דגם מאז שמישהו אחר כתב אינו רשאי
+  להצהיר את זה. בלי זה שני חלונות שמסמנים באותו רגע — השני כותב אחרון, האסימון
+  שלו תואם לאחסון, והסימון של הראשון לא מגיע אליו לעולם.
+- **שלושה דברים מחזיקים את המנוע בחיים, ואם אחד יורד הבאג הגדול חוזר:**
+  `contributes.background.entrypoint`, `activationEvents` לא ריק,
+  ו-`startup.keepAlive: true` יחד עם `app.background_keep_alive`.
+- **אל תוסיפו `app.startup` ל-`activationEvents`.** השעון החד-פעמי שלו קורא
+  ל-`_activate` בלי לבדוק אם כבר רץ מנוע, `_activateOnDemand` יוצא מיד כי
+  `_activeBackgroundPlugins` כבר מחזיק את התוסף, ואז `_activating` לעולם אינו
+  מתנקה. `dispatchEventToPlugin` בודקת `queueIfBootPending` לפני שהיא מחפשת
+  controller, ולכן **כל** לחיצה נכנסת לתור שלא ירוקן — גם כשהלשונית פתוחה
+  ובריאה. הפירוט ב-`docs/ARCHITECTURE.md`, ו-`test/compatibility.test.js`
+  אוכף את זה.
+- **הפקד בסרגל אינו `openPlugin`,** והדגל `marker_toolbar_button` חייב לשבת
+  במפתח אחסון משלו — ה-`when` של ה-Host משווה ערך שמור שלם ואינו נכנס לתוך
+  `marker_settings`.
+- **מטפלי אירועי שידור אינם מגודרים ב-`isEngine` בעיוורון.**
+  `PluginRuntimeDispatcher._selectEventTargets` מוסר שידור למופעים הקדמיים
+  החיים כשיש כאלה, ונופל למנוע הרקע רק כשאין אף אחד — כלומר כשלשונית התוסף
+  פתוחה, המנוע אינו מקבל `reader.selection_changed` ולא
+  `reader.current_ref_changed` בכלל. מטפל שרק *מעדכן תרומה* (עדכון מותר מכל
+  מופע) חייב לרוץ בשני הצדדים — וכך גם מטפל שמצייר, כי כל מופע מצייר.
+  היוצא מן הכלל הוא `reader.sectionContentChanged`, שנמצא ב-
+  `_backgroundEventTopics` ולכן תמיד מועדף למנוע.
 - **אף מטפל לחיצה אינו בודק `isEngine`.** אוצריא מוסרת אירוע ממוקד (תפריט,
   פקד, קיצור) למופע אחד בלבד, ולכן אין כפילות למנוע — והבדיקה גרמה ללחיצות
-  להיעלם בלי זכר. `isEngine` שייך רק לאירועי שידור
-  (`reader.sectionContentChanged`) ולעבודת עלייה.
+  להיעלם בלי זכר. `isEngine` שייך לעבודת עלייה ולשאלה מי רשאי
+  **לרשום** תרומה חדשה — לא לשאלה מי מצייר.
+- **טקסט התצוגה עובר ב-`applyHolyNamePolicy`**, וההחלפה היא בתצוגה בלבד:
+  הרשומה נשמרת בנוסח הספר. כל מקום שמציג, מדפיס או מייצא טקסט מסומן חייב
+  לעבור ב-`bookText` שב-`marker-ui.js`.
+- **`selectedTextOf` מעדיף `renderedSelectedText`.** המיפוי של אוצריא
+  מהטקסט המוצג למקור מבצע אינטרפולציה יחסית בתוך קטעים שנכתבו מחדש, והחזרה
+  לסדר המקור הזיזה את הטקסט השמור בכמה תווים. אל תהפכו את הסדר בחזרה.
 - מטפל לחיצה חייב `await whenBooted()` לפני שהוא קורא `settings` — הלחיצה
   עשויה להיות מה שהעיר את הדף.
 - **`update` לתפריט מותר תמיד, `add` הוא נפילה בלבד.** הפריטים רשומים ברמת
@@ -78,8 +152,9 @@
 - שינוי סגנון צבע מסנכרן הדגשות קיימות (`restyleStoredHighlights`).
 - חלקי בחירה רב-פסקתית חולקים `groupId` ונמחקים תמיד יחד.
 - אין לעטוף את `feedback.report` ב-timeout — היא ממתינה לדיאלוג של המשתמש.
-- `ui.print` ו-`ui.exportPdf` חייבות להיקרא **ישירות מ-handler של לחיצה**;
-  `await` לפניהן מאבד את ה-user activation ומחזיר `error.forbidden`.
+- `ui.exportPdf` (ו-`window.print()`) חייבות להיקרא **ישירות מ-handler של
+  לחיצה**; `await` לפניהן מאבד את ה-user activation ומחזיר `error.forbidden`.
+  `ui.print` אינה בשימוש בכוונה — ראו `docs/COMPATIBILITY.md`.
 
 ## הערות עשירות — כלל האבטחה
 
@@ -133,8 +208,7 @@
 4. הריצו את הכול:
    ```text
    for f in js/*.js i18n/*.js; do node --check "$f"; done
-   node --test test/domain.test.js test/runtime.test.js test/core.test.js \
-               test/i18n.test.js test/ui.test.js test/compatibility.test.js
+   node --test "test/*.test.js"
    git diff --check
    ```
 5. בדקו IDs ייחודיים וסוגריים מאוזנים ב-CSS (`test/ui.test.js` עושה את זה).
@@ -148,7 +222,9 @@
 - קריאת SDK שאינה עוברת דרך `MarkerRuntime`.
 - `catch` ריק שמסתיר כשל אמיתי. השתמשו ב-`callSoft` כשהכשל באמת לא משנה,
   וב-`MarkerSdkError.isUnsupported` כדי להבדיל בין "המארח לא מכיר" לכשל.
-- הוספת permission שאין לה פיצ׳ר — הבדיקה תיכשל.
+- הוספת permission שאין לה פיצ׳ר — הבדיקה תיכשל. (היוצאים מן הכלל מפורטים
+  ב-`compatibility.test.js`: הרשאות שמגבות תרומה במניפסט ולא קריאת RPC.)
+- קובץ גופן שנכנס חזרה לחבילה. הגופנים נטענים מ-`fonts.resolveFamilies`.
 - הצהרה על הרשאת בסיס (`plugin.storage.*`, `ui.feedback`, `app.info.read`,
   `notifications.send`, `events.subscribe:theme.changed`) — מיותרת מ-0.9.97.
 - מחיקה או החלפה מלאה בלי rollback.

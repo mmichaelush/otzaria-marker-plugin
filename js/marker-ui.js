@@ -28,6 +28,17 @@
     ['#F3B6C8', 'ורוד'], ['#C9C2F5', 'סגלגל']
   ]);
   const UNDO_WINDOW_MS = 30_000;
+  /**
+   * The colours tab saves without announcing it.
+   *
+   * Every control there shows its own result — the swatch, the preview strip,
+   * the menu badge — so a second "saved automatically ✓" strip on top of that
+   * was noise reporting what the user could already see. `null` keeps the
+   * debounce and the revision guard and drops only the status element; a
+   * failure still surfaces, as a message rather than as a line of text in a
+   * tab the user may have left.
+   */
+  const COLORS_AUTOSAVE = null;
 
   // ── Session state (view-only) ──────────────────────────────────────────────
 
@@ -54,6 +65,20 @@
 
   function colorLabelOf(colorId) {
     return colorDisplayLabel(D.findColor(Core.settings, colorId));
+  }
+
+  /**
+   * Book text, ready to show.
+   *
+   * The only transformation is the Divine Name, and it belongs here rather
+   * than in storage: the stored record keeps the book's own wording, so
+   * turning the preference off restores it and an export never bakes one
+   * reader's display choice into the data. Everything the user sees, prints or
+   * exports goes through this — a reader who has the substitution on in
+   * Otzaria must not meet the Name spelled out in a list of their own marks.
+   */
+  function bookText(value) {
+    return Core.displayText(value ?? '');
   }
 
   /**
@@ -111,27 +136,73 @@
     document.body.classList.toggle('dark-mode', theme.mode === 'dark');
   }
 
+  // ── Reading fonts ──────────────────────────────────────────────────────────
+
+  /**
+   * The reading fonts, requested from Otzaria instead of shipped in the ZIP.
+   *
+   * These are the families Otzaria itself bundles (`AppFonts.fontPaths`), and
+   * `fonts.resolveFamilies` hands back ready `@font-face` rules carrying their
+   * bytes. `src: local()` would not do: inside a plugin WebView it resolves
+   * only fonts installed on the machine, never the ones the app injects — so
+   * the plugin used to carry nine copies of files the user already has, in
+   * every download of every version.
+   *
+   * The substitutes are a fallback order, not aliases: if a family is missing
+   * from this Otzaria build, the nearest installed face is served under the
+   * requested name rather than the page silently falling back to serif.
+   */
+  const READING_FONTS = Object.freeze({
+    FrankRuhlCLM: ['FrankRuhlCLM', 'Frank Ruhl Libre', 'David'],
+    TaameyDavidCLM: ['TaameyDavidCLM', 'Taamey David CLM', 'David'],
+    TaameyAshkenaz: ['TaameyAshkenaz', 'Taamey Ashkenaz', 'David'],
+    KeterYG: ['KeterYG', 'Keter YG', 'David'],
+    Shofar: ['Shofar', 'Arial'],
+    NotoSerifHebrew: ['NotoSerifHebrew', 'Noto Serif Hebrew'],
+    NotoRashiHebrew: ['NotoRashiHebrew', 'Noto Rashi Hebrew'],
+    Tinos: ['Tinos', 'Times New Roman'],
+    Rubik: ['Rubik', 'Arial']
+  });
+
+  const fontStacks = {
+    app: 'var(--font-app)',
+    system: "system-ui, -apple-system, 'Segoe UI', sans-serif"
+  };
+  const requestedFonts = new Set();
+
+  /**
+   * Fetches one family's bytes the first time it is chosen, and leaves the
+   * page on the app font until they arrive — so switching fonts never flashes
+   * an unstyled list.
+   */
+  async function ensureReadingFont(choice) {
+    if (!READING_FONTS[choice] || requestedFonts.has(choice)) return;
+    requestedFonts.add(choice);
+    const data = await callSoft('fonts.resolveFamilies', {
+      families: [{ name: choice, substitutes: [...READING_FONTS[choice]] }]
+    });
+    if (!data?.css) {
+      logger.warn('Otzaria has no face for this font', choice);
+      return;
+    }
+    const style = document.createElement('style');
+    style.dataset.markerFont = choice;
+    style.textContent = data.css;
+    document.head.appendChild(style);
+    fontStacks[choice] = `'${choice}', var(--font-app)`;
+    applyDisplaySettings();
+  }
+
   function applyDisplaySettings() {
     const appearance = settings().appearance;
-    const fontMap = {
-      app: 'var(--font-app)',
-      system: "system-ui, -apple-system, 'Segoe UI', sans-serif",
-      FrankRuhlCLM: "'FrankRuhlCLM', serif",
-      TaameyDavidCLM: "'TaameyDavidCLM', serif",
-      TaameyAshkenaz: "'TaameyAshkenaz', serif",
-      KeterYG: "'KeterYG', serif",
-      Shofar: "'Shofar', sans-serif",
-      NotoSerifHebrew: "'NotoSerifHebrew', serif",
-      NotoRashiHebrew: "'NotoRashiHebrew', serif",
-      Tinos: "'Tinos', serif",
-      Rubik: "'Rubik', sans-serif"
-    };
     const root = document.documentElement;
-    root.style.setProperty('--font-main', fontMap[appearance.fontFamily] || 'var(--font-app)');
+    root.style.setProperty('--font-main', fontStacks[appearance.fontFamily] || 'var(--font-app)');
     root.style.setProperty('--highlight-font-size', `${appearance.fontSize}px`);
     root.style.setProperty('--highlight-line-height', String(appearance.lineHeight));
     const list = $('#highlightsList');
     if (list) list.dataset.view = appearance.viewMode;
+    ensureReadingFont(appearance.fontFamily)
+      .catch(error => logger.warn('Failed loading a reading font', error));
   }
 
   // ── Custom select ──────────────────────────────────────────────────────────
@@ -229,7 +300,10 @@
     autoSaveRevisions.set(statusId, revision);
     clearTimeout(autoSaveTimers.get(statusId));
 
-    const status = $(`#${statusId}`);
+    // `statusId` may be null — a form that saves without announcing it. The
+    // guard below turns every status write into a no-op; the failure path
+    // falls back to a message, so a silent form is never a silent failure.
+    const status = statusId ? $(`#${statusId}`) : null;
     if (status) {
       status.hidden = false;
       status.dataset.state = 'saving';
@@ -254,7 +328,11 @@
         status.textContent = t('נשמר אוטומטית ✓');
       } catch (error) {
         logger.error('Automatic settings save failed', error);
-        if (revision !== autoSaveRevisions.get(statusId) || !status) return;
+        if (revision !== autoSaveRevisions.get(statusId)) return;
+        if (!status) {
+          await notify.error(t('השמירה נכשלה: {reason}', { reason: Core.describeError(error) }));
+          return;
+        }
         status.dataset.state = 'error';
         status.textContent = t('השמירה נכשלה');
       }
@@ -397,7 +475,7 @@
   function highlightCardHtml(item) {
     const color = D.findColor(Core.settings, item.colorId);
     const title = `${item.book || item.bookId}${item.ref ? ' · ' + item.ref : ''}`;
-    const text = (item.text || '').trim();
+    const text = bookText(item.text).trim();
     const short = text.length > 90 ? `${text.slice(0, 90)}…` : text;
     const stale = D.isStale(item);
     const colorMenu = Core.settings.colors.map(option => {
@@ -456,7 +534,7 @@
     // alternative *cut* of the data, so the other chips' own filters are left
     // out — but a chip promising 40 results while the search shows 2 is
     // simply wrong, and clicking it lands on an empty list.
-    const all = D.filterHighlights(Core.getHighlights(), { query: filters.query }, colorLabelOf);
+    const all = D.filterHighlights(Core.getHighlights(), { query: filters.query }, colorLabelOf, bookText);
     const stats = D.summarize(all);
     if (!all.length) {
       strip.innerHTML = '';
@@ -520,7 +598,7 @@
 
     const filters = currentFilters();
     const filtered = D.sortHighlights(
-      D.filterHighlights(all, filters, colorLabelOf),
+      D.filterHighlights(all, filters, colorLabelOf, bookText),
       $('#sortHighlights').value,
       colorLabelOf
     );
@@ -787,7 +865,7 @@
     resetLinkBar();
     $('#editHighlightTags').value = item.tags.join(', ');
     $('#editHighlightFavorite').checked = item.favorite === true;
-    $('#editHighlightPreview').textContent = item.text || t('הדגשה ללא תצוגה מקדימה');
+    $('#editHighlightPreview').textContent = bookText(item.text) || t('הדגשה ללא תצוגה מקדימה');
     const dialog = $('#editHighlightDialog');
     if (!dialog.open) dialog.showModal();
     requestAnimationFrame(() => noteEditor().focus());
@@ -883,7 +961,7 @@
   function citationOf(item) {
     const heading = [item.book || item.bookId, item.ref].filter(Boolean).join(' · ');
     const note = item.note.trim();
-    return [item.text, heading ? `(${heading})` : '', note ? `${t('הערה')}: ${note}` : '']
+    return [bookText(item.text), heading ? `(${heading})` : '', note ? `${t('הערה')}: ${note}` : '']
       .filter(Boolean).join('\n');
   }
 
@@ -901,7 +979,7 @@
         <details class="color-picker-details">
           <summary class="color-picker-btn" title="${escapeHtml(t('בחירת גוון'))}" aria-label="${escapeHtml(t('בחירת גוון עבור {name}', { name: color.label }))}"><span class="color-swatch"></span><span class="color-picker-label">${escapeHtml(t('בחירת גוון'))}</span><svg class="chevron-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg></summary>
           <div class="color-picker-popover">
-            <span class="picker-popover-title">${escapeHtml(t('בחרו גוון'))}</span>
+            <div class="picker-popover-head"><span class="picker-popover-title">${escapeHtml(t('בחרו גוון'))}</span><button type="button" class="icon-btn picker-close-btn" data-action="close-picker" title="${escapeHtml(t('סגור'))}" aria-label="${escapeHtml(t('סגור'))}"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>
             <div class="preset-swatches" role="listbox" aria-label="${escapeHtml(t('גוונים מוכנים'))}">${COLOR_PRESETS.map(([presetHex, name]) => {
               const selected = D.toSafeHex(color.hex) === presetHex;
               return `<button type="button" class="preset-swatch${selected ? ' is-selected' : ''}" data-action="preset" data-hex="${presetHex}" title="${escapeHtml(t(name))}" aria-label="${escapeHtml(t(name))}" aria-selected="${selected}" style="--swatch:${presetHex}"></button>`;
@@ -1037,7 +1115,7 @@
       colors.splice(targetIndex, 0, moved);
       draftSettings = D.normalizeSettings(Object.assign({}, dragBase, { colors }));
       renderColorsEditor();
-      scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus', 100);
+      scheduleAutoSave(collectColorsFromForm, COLORS_AUTOSAVE, 100);
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', finish);
@@ -1054,6 +1132,7 @@
     $('#fontSize').value = String(current.appearance.fontSize);
     $('#lineHeight').value = String(current.appearance.lineHeight);
     $('#autoBackupToggle').checked = current.autoBackup;
+    $('#holyNames').value = current.holyNames;
     const menuStyle = $(`input[name="menuStyle"][value="${current.menuStyle}"]`);
     if (menuStyle) menuStyle.checked = true;
 
@@ -1084,6 +1163,8 @@
       language: $('#languageSelect').value,
       menuStyle: $('input[name="menuStyle"]:checked')?.value || Core.settings.menuStyle,
       autoBackup: $('#autoBackupToggle').checked,
+      holyNames: $('#holyNames').value,
+      toolbarButton: $('#toolbarButtonToggle').checked,
       appearance: {
         viewMode: $('#viewMode').value,
         fontFamily: $('#fontFamily').value,
@@ -1156,6 +1237,7 @@
       const date = template.includeDate && item.timestamp ? formatDate(item.timestamp) : '';
       const note = template.includeNote && item.note ? item.note : '';
       const tags = template.includeTags && item.tags.length ? item.tags : [];
+      const text = bookText(item.text);
 
       if (template.format === 'html') {
         // The rich note keeps its formatting in an HTML export — sanitized,
@@ -1163,14 +1245,14 @@
         const noteBlock = template.includeNote && item.noteHtml
           ? `<div class="note">${sanitizedNote(item.noteHtml)}</div>`
           : (note ? `<p><strong>${escapeHtml(t('הערה'))}:</strong> ${escapeHtml(note)}</p>` : '');
-        return `<article dir="${I18n.direction}"><h2>${escapeHtml(heading)}</h2><blockquote>${escapeHtml(item.text)}</blockquote>`
+        return `<article dir="${I18n.direction}"><h2>${escapeHtml(heading)}</h2><blockquote>${escapeHtml(text)}</blockquote>`
           + noteBlock
           + (tags.length ? `<p><strong>${escapeHtml(t('תגיות'))}:</strong> ${tags.map(escapeHtml).join(', ')}</p>` : '')
           + (date ? `<time>${escapeHtml(date)}</time>` : '')
           + '</article>';
       }
       if (template.format === 'text') {
-        return [heading, item.text, note ? `${t('הערה')}: ${note}` : '',
+        return [heading, text, note ? `${t('הערה')}: ${note}` : '',
           tags.length ? `${t('תגיות')}: ${tags.join(', ')}` : '', date].filter(Boolean).join('\n');
       }
       // Markdown has no escaping layer of its own, so every stored value is
@@ -1178,7 +1260,7 @@
       const md = D.escapeMarkdownBlocks;
       return [
         `## ${md(heading) || t('הדגשה')}`,
-        `> ${md(item.text).replace(/\n/g, '\n> ')}`,
+        `> ${md(text).replace(/\n/g, '\n> ')}`,
         note ? `**${t('הערה')}:** ${md(note)}` : '',
         tags.length ? `**${t('תגיות')}:** ${tags.map(md).join(', ')}` : '',
         date ? `_${date}_` : ''
@@ -1285,24 +1367,53 @@
 
   // ── About & report ─────────────────────────────────────────────────────────
 
+  /**
+   * The About tab, with every outward-facing control gated on the permission
+   * that makes it work.
+   *
+   * A button that is present but fails on click is worse than an absent one:
+   * the user cannot tell whether they did something wrong or the plugin is
+   * broken. So each of these appears only once Otzaria has actually granted
+   * the permission behind it, and the card says so in the user's own words.
+   */
   async function renderAbout() {
     const host = Core.hostContext;
+    const may = permission => D.hasPermission(host.permissions, permission);
     $('#aboutPluginVersion').textContent = Core.PLUGIN_VERSION;
     $('#aboutHostVersion').textContent = host.appVersion;
     $('#aboutPlatform').textContent = host.platform;
-    $('#aboutRunMode').textContent = t('הדף מנהל את התוסף');
-    $('#createShortcutBtn').hidden = !host.isDesktop;
-    $('#createStartMenuShortcutBtn').hidden = host.platform !== 'windows';
+    $('#aboutRunMode').textContent = Core.isEngine
+      ? t('דף התוסף מצייר את ההדגשות')
+      : t('מנוע הרקע מצייר את ההדגשות');
+
+    $('#linksCard').hidden = !may('app.open_url');
+
+    const mayShortcut = may('ui.create_shortcut');
+    const toolbarRow = may('reader.toolbar');
+    const desktopRow = mayShortcut && host.isDesktop;
+    const startMenuRow = mayShortcut && host.platform === 'windows';
+    $('#toolbarButtonRow').hidden = !toolbarRow;
+    $('#shortcutRow').hidden = !desktopRow;
+    $('#startMenuRow').hidden = !startMenuRow;
+    $('#integrationEmpty').hidden = toolbarRow || desktopRow || startMenuRow;
+    $('#integrationCard').hidden = false;
+    $('#toolbarButtonToggle').checked = settings().toolbarButton !== false;
+
     $('#reportEmailField').hidden = await Core.hasReporterEmail();
   }
 
   async function createShortcut(location) {
     const result = await callSoft('shortcut.create', { label: t('מרקר'), location });
     if (!result) {
-      await notify.error(t('לא ניתן ליצור קיצור דרך'));
+      await notify.error(t('לא הצלחנו ליצור את הקיצור. ייתכן שההרשאה כבויה, או שבמערכת הזאת אין שולחן עבודה.'));
       return;
     }
-    if (result.created) await notify.success(t('קיצור הדרך נוצר'));
+    // `created: false` is the user pressing Cancel in Otzaria's own dialog —
+    // they know what they did, and a toast about it would be noise.
+    if (!result.created) return;
+    await notify.success(location === 'startMenu'
+      ? t('מרקר נוסף לתפריט ההתחל')
+      : t('הקיצור נוצר בשולחן העבודה'));
   }
 
   async function submitReport(event) {
@@ -1417,17 +1528,17 @@
   }
 
   /**
-   * The background engine writes to the same storage while this page is open,
-   * so the list can go stale without any local event. Polling exists only for
-   * that case — when the page itself owns the engine, nothing external can
-   * change the data and the timer never starts.
-   */
-  /**
-   * What "the list changed" means for the background poll.
+   * What "the list changed" means.
    *
-   * `noteHtml` belongs here as much as `note` does: an edit that only
-   * changes the formatting leaves the plain-text mirror identical, and the
-   * card would keep rendering the old markup until something else changed.
+   * The background engine writes to the same storage while this page is open —
+   * a mark made in the book, a note removed from the right-click menu — and
+   * the page learns about it through `MarkerCore`'s revision watch, not
+   * through any local event. This signature is what decides whether that
+   * re-read is worth a re-render.
+   *
+   * `noteHtml` belongs here as much as `note` does: an edit that only changes
+   * the formatting leaves the plain-text mirror identical, and the card would
+   * keep rendering the old markup until something else changed.
    */
   function highlightsSignature() {
     return JSON.stringify(Core.getHighlights().map(item => [
@@ -1792,13 +1903,23 @@
         row.style.setProperty('--marker-preview-color',
           D.hexToRgba(hex, Number(row.querySelector('[data-field="opacity"]').value)));
         draftSettings = collectColorsFromForm();
-        scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus', 150);
+        scheduleAutoSave(collectColorsFromForm, COLORS_AUTOSAVE, 150);
       };
 
 
+      // The shade popover is a `<details>`; closing it is setting `open`.
+      const closePicker = () => {
+        const picker = button.closest('details.color-picker-details');
+        if (picker) picker.open = false;
+      };
+
       switch (button.dataset.action) {
+        case 'close-picker':
+          closePicker();
+          return;
         case 'preset':
           setRowHex(D.toSafeHex(button.dataset.hex));
+          closePicker();
           return;
         case 'browser-picker': {
           const input = row.querySelector('input[type="color"]');
@@ -1815,6 +1936,7 @@
             return;
           }
           setRowHex(value.toUpperCase());
+          closePicker();
           return;
         }
         case 'make-default': {
@@ -1843,7 +1965,7 @@
       }
       draftSettings = D.normalizeSettings(draft);
       renderColorsEditor();
-      scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus', 100);
+      scheduleAutoSave(collectColorsFromForm, COLORS_AUTOSAVE, 100);
     });
 
     editor.addEventListener('input', event => {
@@ -1876,7 +1998,7 @@
         row.style.setProperty('--marker-radius', `${event.target.value}px`);
       }
       draftSettings = collectColorsFromForm();
-      scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus');
+      scheduleAutoSave(collectColorsFromForm, COLORS_AUTOSAVE);
     });
 
     editor.addEventListener('change', event => {
@@ -1884,13 +2006,13 @@
         event.target.closest('.color-row')?.setAttribute('data-marker-mode', event.target.value);
       }
       draftSettings = collectColorsFromForm();
-      scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus', 150);
+      scheduleAutoSave(collectColorsFromForm, COLORS_AUTOSAVE, 150);
       if (event.target.matches('[data-field="enabled"]')) renderColorsEditor();
     });
 
     $('#colorsForm').addEventListener('submit', event => {
       event.preventDefault();
-      scheduleAutoSave(collectColorsFromForm, 'colorsAutoSaveStatus', 0);
+      scheduleAutoSave(collectColorsFromForm, COLORS_AUTOSAVE, 0);
     });
     $('#resetColorsBtn').addEventListener('click', async () => {
       const confirmed = await notify.confirm(
@@ -1995,6 +2117,19 @@
       callSoft('app.openUrl', { url: Core.STORE_PAGE }));
     $('#createShortcutBtn').addEventListener('click', () => createShortcut('desktop'));
     $('#createStartMenuShortcutBtn').addEventListener('click', () => createShortcut('startMenu'));
+    // Lives outside #preferencesForm, so it saves itself rather than riding
+    // that form's auto-save. Written straight through, not debounced: the host
+    // reads the mirrored flag to decide whether to draw the toolbar button,
+    // and a switch that takes half a second to take effect reads as broken.
+    $('#toolbarButtonToggle').addEventListener('change', () => guard(async () => {
+      draftSettings = null;
+      await Core.saveSettings(Object.assign({}, Core.settings, {
+        toolbarButton: $('#toolbarButtonToggle').checked
+      }));
+      await notify.success($('#toolbarButtonToggle').checked
+        ? t('סמל מרקר יופיע בסרגל הכלים של הספר')
+        : t('סמל מרקר לא יופיע יותר בסרגל הכלים'));
+    }, () => t('שינוי הסמל בסרגל הכלים נכשל')));
     $('#reportForm').addEventListener('submit', submitReport);
   }
 
@@ -2029,19 +2164,39 @@
     });
   }
 
+  /**
+   * The one banner at the top of the page, and the wording matters.
+   *
+   * A user wrote in asking what "the startup-contributions permission is off,
+   * so the right-click menu is only registered while the plugin is open" was
+   * supposed to mean. It named an internal permission, described a mechanism,
+   * and never said what the user would actually notice or what to do about
+   * it. Each message here says, in order: what does not work, why, and the
+   * exact path to fix it.
+   */
   function showEngineNotice() {
     const notice = $('#engineNotice');
     const permissions = Core.hostContext.permissions;
-    if (!D.hasPermission(permissions, 'app.startup_contributions')) {
-      $('#engineNoticeText').textContent =
-        t('ההרשאה „תרומות עלייה” כבויה, ולכן תפריט הלחיצה הימנית נרשם רק כשהתוסף פתוח.');
+    const may = permission => D.hasPermission(permissions, permission);
+    const show = message => {
+      $('#engineNoticeText').textContent = message;
       notice.hidden = false;
+    };
+
+    if (!may('reader.highlight')) {
+      show(t('כרגע אי אפשר לצבוע טקסט בספרים: למרקר חסרה ההרשאה „הדגשות בטקסט”. הסימונים שכבר שמורים לא נמחקו והם עדיין ברשימה כאן, אבל הם לא יופיעו על הדף. להפעלה: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.'));
       return;
     }
-    if (!D.hasPermission(permissions, 'reader.highlight')) {
-      $('#engineNoticeText').textContent =
-        t('ההרשאה „סימון בקורא” כבויה, ולכן ההדגשות נשמרות אך אינן מצוירות על הטקסט.');
-      notice.hidden = false;
+    if (!may('app.startup_contributions')) {
+      show(t('תפריט הצבעים לא יופיע בלחיצה ימנית בספר, כי ההרשאה „הוספת רכיבים לתוכנה” כבויה. להפעלה: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.'));
+      return;
+    }
+    if (!D.backgroundEngineAllowed(Core.hostContext)) {
+      show(t('ההדגשות יופיעו בספרים רק כל עוד הכרטיסייה הזאת פתוחה, ולחיצה על צבע בתפריט הימני תקפיץ אתכם לכאן במקום לסמן בספר. הסיבה: ההרשאה „טעינה אוטומטית ברקע” כבויה. להפעלה: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.'));
+      return;
+    }
+    if (!may('app.background_keep_alive')) {
+      show(t('ההדגשות עלולות להיעלם מהספר אחרי כמה דקות של חוסר פעילות, ולחזור רק כשתדפדפו. הסיבה: ההרשאה „מניעת כיבוי מנוע הרקע” כבויה. להפעלה: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.'));
       return;
     }
     notice.hidden = true;
@@ -2154,10 +2309,10 @@
     applyDisplaySettings();
   }, logger);
 
-  // Storage is the authority, and it may have moved on while the page was
-  // suspended — a fresh read on resume, but no polling in between: this is
-  // the only instance, so nothing else writes.
-  R.on('plugin.resumed', () => Core.loadHighlights(), logger);
+  // Storage is the authority, and the background engine may have moved it on
+  // while this tab was suspended — Otzaria freezes a plugin tab that is not on
+  // screen, so the revision watch was not running either.
+  R.on('plugin.resumed', () => Core.pollRevision(), logger);
 
   Core.start();
 })(globalThis);

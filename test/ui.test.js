@@ -48,12 +48,34 @@ test('ids are unique', () => {
 });
 
 test('the ids addressed through a template string are declared too', () => {
-  // `scheduleAutoSave` resolves `#${statusId}` at run time, so the two status
-  // elements are invisible to the selector scan above.
-  for (const id of ['colorsAutoSaveStatus', 'preferencesAutoSaveStatus']) {
+  // `scheduleAutoSave` resolves `#${statusId}` at run time, so a status
+  // element is invisible to the selector scan above.
+  for (const id of ['preferencesAutoSaveStatus']) {
     assert.equal(HTML.includes(`id="${id}"`), true, `${id} is missing`);
     assert.equal(UI.includes(`'${id}'`), true, `${id} is never passed to scheduleAutoSave`);
   }
+});
+
+test('the colours tab saves silently, but never fails silently', () => {
+  // Its controls show their own result — swatch, preview strip, menu badge —
+  // so a "saved automatically ✓" line on top of that was noise. The failure
+  // path still has to reach the user, and with no status element the only
+  // route left is a message.
+  assert.equal(HTML.includes('id="colorsAutoSaveStatus"'), false);
+  assert.match(UI, /const COLORS_AUTOSAVE = null;/);
+  assert.match(UI, /scheduleAutoSave\(collectColorsFromForm, COLORS_AUTOSAVE/);
+  assert.match(UI, /if \(!status\) \{\s*await notify\.error\(/,
+    'a save that fails with no status element must say so another way');
+});
+
+test('the shade popover can be dismissed, and applying a shade dismisses it', () => {
+  // It is a `<details>` pinned to the middle of the screen. Without a close
+  // button the only way out was a second click on the trigger behind it.
+  assert.match(UI, /data-action="close-picker"/);
+  assert.match(UI, /case 'close-picker':/);
+  const closes = (UI.match(/closePicker\(\);/g) || []).length;
+  assert.ok(closes >= 3, `apply, preset and the close button must all close it (saw ${closes})`);
+  assert.match(UI, /picker\.open = false/);
 });
 
 test('the note link bar is only ever hidden through resetLinkBar', () => {

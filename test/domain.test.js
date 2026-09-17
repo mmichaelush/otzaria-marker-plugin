@@ -266,14 +266,22 @@ test('an export cannot be restructured through a note', () => {
   assert.equal(D.escapeMarkdownBlocks('טקסט רגיל'), 'טקסט רגיל', 'ordinary prose is left alone');
 });
 
-test('only the page may draw highlights, never a background instance', () => {
-  // Host highlights are owned per instance and erased on teardown, so an
-  // ephemeral background instance must never become the drawer.
-  const background = D.normalizeBootContext({ app: { runMode: 'background' } });
-  const page = D.normalizeBootContext({ app: { runMode: 'foreground' } });
-  assert.equal(D.ownsEngine(background), false);
+test('the background engine draws, and the page stands down for it', () => {
+  // Host highlights are owned per instance and erased on teardown, so exactly
+  // one instance may draw — the one that outlives the others.
+  const run = ['app.run_on_startup'];
+  const background = D.normalizeBootContext({ app: { runMode: 'background' }, permissions: run });
+  const viewer = D.normalizeBootContext({ app: { runMode: 'foreground' }, permissions: run });
+  assert.equal(D.ownsEngine(background), true);
+  assert.equal(D.ownsEngine(viewer), false);
+});
+
+test('without the background permission the page takes the job back', () => {
+  // Otherwise nothing would draw at all: there is no engine to defer to.
+  const page = D.normalizeBootContext({ app: { runMode: 'foreground' }, permissions: [] });
   assert.equal(D.ownsEngine(page), true);
   assert.equal(D.ownsEngine(undefined), true);
+  assert.equal(D.backgroundEngineAllowed(page), false);
 });
 
 // ── Context menu payloads ───────────────────────────────────────────────────
@@ -764,4 +772,146 @@ test('escapeHtml neutralizes every character that could break out of markup', ()
     '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;');
   assert.equal(D.escapeHtml("it's"), 'it&#39;s');
   assert.equal(D.escapeHtml(null), '');
+});
+
+// ── The Divine Name ─────────────────────────────────────────────────────────
+
+test('the Divine Name is substituted the way Otzaria substitutes it', () => {
+  assert.equal(D.replaceHolyNames('ויאמר יהוה אל משה'), 'ויאמר יקוק אל משה');
+  assert.equal(D.replaceHolyNames('ויאמר יהוה אל משה', 'heh'), "ויאמר ה' אל משה");
+  // The marks belong to the letters, so the kuf form keeps every one of them
+  // in place and only the two letters change.
+  assert.equal(D.replaceHolyNames('לַֽיהֹוָ֥ה'), 'לַֽיקֹוָ֥ק');
+  // …and the heh form replaces the word outright, marks included.
+  assert.equal(D.replaceHolyNames('לַֽיהֹוָ֥ה', 'heh'), "לַֽה'");
+});
+
+test('a word that merely ends in those letters is left alone', () => {
+  // Three Hebrew letters before the match mean it is the tail of a word, not
+  // the Name — the case Otzaria documents.
+  assert.equal(D.replaceHolyNames('ויגביהוהו'), 'ויגביהוהו');
+  assert.equal(D.replaceHolyNames('טקסט בלי שם'), 'טקסט בלי שם');
+  assert.equal(D.replaceHolyNames(''), '');
+  assert.equal(D.replaceHolyNames(null), '');
+});
+
+test('auto follows Otzaria, and the explicit modes override it in both directions', () => {
+  const host = { replace: true, style: 'heh' };
+  assert.deepEqual(plain(D.resolveHolyNamePolicy('auto', host)), { enabled: true, style: 'heh' });
+  assert.deepEqual(plain(D.resolveHolyNamePolicy('auto', { replace: false })),
+    { enabled: false, style: 'kuf' });
+  // A reader whose book display is unfiltered can still ask for a filtered list.
+  assert.equal(D.resolveHolyNamePolicy('always', { replace: false }).enabled, true);
+  assert.equal(D.resolveHolyNamePolicy('never', host).enabled, false);
+  // An unknown style from a hand-edited backup falls back rather than leaking.
+  assert.equal(D.resolveHolyNamePolicy('always', { style: 'nonsense' }).style, 'kuf');
+});
+
+test('applying the policy is a no-op when it is off', () => {
+  assert.equal(D.applyHolyNamePolicy('יהוה', { enabled: false }), 'יהוה');
+  assert.equal(D.applyHolyNamePolicy('יהוה', { enabled: true, style: 'kuf' }), 'יקוק');
+  assert.equal(D.applyHolyNamePolicy(undefined, { enabled: true }), '');
+});
+
+test('the search box matches both the stored spelling and the one on screen', () => {
+  const item = D.normalizeHighlight({
+    highlightId: 'marker-name', bookId: 'בראשית', sectionIndex: 1,
+    text: 'ויאמר יהוה', color: '#F1E784',
+    sourceRange: {
+      type: 'text-range-v1', layer: 'source',
+      start: { grapheme: 0, utf16: 0 }, end: { grapheme: 5, utf16: 5 }
+    }
+  });
+  const display = value => D.replaceHolyNames(value);
+  const find = query =>
+    D.filterHighlights([item], { query }, () => '', display).length;
+  assert.equal(find('יקוק'), 1, 'what the reader sees on the card');
+  assert.equal(find('יהוה'), 1, 'what the book itself says');
+});
+
+// ── Selection text ──────────────────────────────────────────────────────────
+
+test('the stored text is the one the reader saw, not the remapped source', () => {
+  // Otzaria maps the selection back to the canonical text through a mapping
+  // that interpolates across rewritten runs, and the result can be a few
+  // characters off. The rendered text needs no such round trip.
+  assert.equal(D.selectedTextOf({
+    renderedSelectedText: 'מה שסומן',
+    sourceSelectedText: 'משהו אחר לגמרי'
+  }), 'מה שסומן');
+  // Still falls back, for a host payload that carries only the source text.
+  assert.equal(D.selectedTextOf({ sourceSelectedText: 'מקור' }), 'מקור');
+  assert.equal(D.selectedTextOf({ text: 'ישן' }), 'ישן');
+  assert.equal(D.selectedTextOf(null), '');
+});
+
+// ── Hidden books and the toolbar ────────────────────────────────────────────
+
+test('the muted-book list is deduplicated, cleaned and capped', () => {
+  assert.deepEqual(plain(D.normalizeMutedBooks(['בראשית', 'בראשית', 'שמות'])),
+    ['בראשית', 'שמות']);
+  assert.deepEqual(plain(D.normalizeMutedBooks(null)), []);
+  assert.deepEqual(plain(D.normalizeMutedBooks(['a\u0000b'])), ['ab']);
+  const many = Array.from({ length: D.MAX_MUTED_BOOKS + 10 }, (unused, i) => `book-${i}`);
+  assert.equal(D.normalizeMutedBooks(many).length, D.MAX_MUTED_BOOKS);
+});
+
+test('the toolbar button never opens the plugin, and its label tracks the state', () => {
+  const shown = D.buildToolbarPayload();
+  const hidden = D.buildToolbarPayload(value => value, { muted: true });
+  assert.equal(shown.openPlugin, undefined, 'one click should act, not navigate');
+  assert.match(shown.title, /הסתרת/);
+  assert.match(hidden.title, /הצגת/);
+  assert.notEqual(shown.icon, hidden.icon);
+});
+
+test('the colour row can be built without the eraser', () => {
+  const settings = D.normalizeSettings(null);
+  const withClear = D.buildColorMenuPayload(settings, value => value);
+  const without = D.buildColorMenuPayload(settings, value => value, { withClear: false });
+  assert.equal(withClear.colors.some(entry => entry.id === 'mark-clear'), true);
+  assert.equal(without.colors.some(entry => entry.id === 'mark-clear'), false);
+  // The signature has to move with it, or the patch would be skipped.
+  assert.notEqual(
+    D.menuSignature(settings, 'he', { withClear: true }),
+    D.menuSignature(settings, 'he', { withClear: false })
+  );
+});
+
+test('a selection event with no anchor still finds the marks in its section', () => {
+  // `reader.selection_changed` carries text and a location and no range at
+  // all. Judging it with an overlap test meant the answer was always "no",
+  // and the eraser never appeared over marked text.
+  const mark = D.normalizeHighlight({
+    highlightId: 'marker-a', bookId: 'בראשית', sectionIndex: 4,
+    color: '#F1E784', text: 'טקסט', sourceRange: anchor(10, 30)
+  });
+  const event = (overrides = {}) => Object.assign({
+    text: 'ויאמר אלהים יהי אור',
+    currentBook: 'בראשית',
+    currentBookId: 'בראשית',
+    currentIndex: 4
+  }, overrides);
+
+  assert.equal(D.selectionTouchesHighlight([mark], event()), true);
+  assert.equal(D.selectionTouchesHighlight([mark], event({ currentIndex: 5 })), false);
+  assert.equal(D.selectionTouchesHighlight([mark], event({ currentBookId: 'שמות' })), false);
+  assert.equal(D.selectionTouchesHighlight([], event()), false);
+  assert.equal(D.selectionTouchesHighlight([mark], {}), false);
+});
+
+test('an anchored selection is judged exactly, not by its section', () => {
+  // The context-menu payload does carry ranges, and there the precise answer
+  // is available and strictly better.
+  const mark = D.normalizeHighlight({
+    highlightId: 'marker-a', bookId: 'בראשית', sectionIndex: 4,
+    color: '#F1E784', text: 'טקסט', sourceRange: anchor(10, 30)
+  });
+  const anchored = range => ({
+    bookId: 'בראשית', sectionIndex: 4, currentIndex: 4, sourceRange: range
+  });
+
+  assert.equal(D.selectionTouchesHighlight([mark], anchored(anchor(20, 40))), true);
+  assert.equal(D.selectionTouchesHighlight([mark], anchored(anchor(40, 60))), false,
+    'same section, nowhere near the mark');
 });

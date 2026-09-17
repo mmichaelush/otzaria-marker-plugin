@@ -211,30 +211,72 @@ function validateSetHighlight(payload) {
 }
 
 /**
+ * Otzaria's RPC throttle, ported exactly from `PluginBridgeHandler.RateLimiter`.
+ *
+ * The detail that matters, and that a hand-waved "50 per second" would hide:
+ * every call adds `elapsed ~/ 10` tokens **and then moves `lastRefill` to now**,
+ * so the leftover milliseconds are thrown away. A run of calls closer together
+ * than 10ms therefore refills nothing whatsoever — 50 get through and the rest
+ * are refused, however long the run goes on. That is true of an awaited loop as
+ * much as of `Promise.all`.
+ *
+ * `now` is injectable so a test can drive it without sleeping.
+ */
+function createRateLimiter({ now = Date.now } = {}) {
+  let tokens = 50;
+  let lastRefill = now();
+  let refused = 0;
+  return {
+    consume() {
+      const at = now();
+      tokens = Math.min(50, tokens + Math.floor((at - lastRefill) / 10));
+      lastRefill = at;
+      if (tokens > 0) {
+        tokens -= 1;
+        return true;
+      }
+      refused += 1;
+      return false;
+    },
+    get refusals() { return refused; }
+  };
+}
+
+/**
  * @param {object} [options]
  * @param {object|null} [options.settings]           value behind `marker_settings`
  * @param {object[]}    [options.highlights]         pre-existing stored highlights
  * @param {boolean}     [options.declarativeMenu]    manifest items already registered
+ * @param {object}      [options.hostSettings]       Otzaria settings `settings.getMany` sees
  * @param {object}      [options.overrides]          method → handler overrides
+ * @param {boolean}     [options.throttle]           enforce Otzaria's RPC rate limit
  */
 function createHost(options = {}) {
   const {
     settings = null,
     highlights = [],
     declarativeMenu = true,
-    overrides = {}
+    hostSettings = {},
+    overrides = {},
+    world = null,
+    instanceId = 'foreground',
+    throttle = false
   } = options;
 
   const calls = [];
-  const storage = new Map();
-  const hostHighlights = new Map();
-  const contextMenu = new Map();
-  const toolbar = new Map();
-  const files = new Map();
+  // `world` is how two plugin instances share one Otzaria: the same storage,
+  // the same registries, the same drawn highlights. Without it every instance
+  // lives in its own universe, and the engine/viewer split — where the
+  // interesting bugs are — cannot be exercised at all.
+  const storage = world?.storage || new Map();
+  const hostHighlights = world?.hostHighlights || new Map();
+  const contextMenu = world?.contextMenu || new Map();
+  const toolbar = world?.toolbar || new Map();
+  const files = world?.files || new Map();
 
   if (settings) storage.set('marker_settings', settings);
   for (const item of highlights) storage.set(`highlight:${item.highlightId}`, item);
-  if (declarativeMenu) {
+  if (declarativeMenu && !contextMenu.size) {
     for (const item of manifest().contributes.startup.contextMenuItems) {
       contextMenu.set(item.id, JSON.parse(JSON.stringify(item)));
     }
@@ -242,6 +284,12 @@ function createHost(options = {}) {
       toolbar.set(item.id, JSON.parse(JSON.stringify(item)));
     }
   }
+
+  // `PluginHighlightRegistry` keys every record on (pluginId, instanceId,
+  // highlightId), so each instance keeps its own copy and clears only its own.
+  const recordKey = highlightId => `${instanceId}|${highlightId}`;
+  const ownRecords = () => [...hostHighlights.values()]
+    .filter(record => record.ownerInstanceId === instanceId);
 
   const ok = data => ({ success: true, data, error: null });
   const fail = (code, message = code) => ({
@@ -300,14 +348,15 @@ function createHost(options = {}) {
         etag: `etag-${(previous?.version || 0) + 1}`,
         status: 'active'
       };
-      hostHighlights.set(record.highlightId, record);
+      record.ownerInstanceId = instanceId;
+      hostHighlights.set(recordKey(record.highlightId), record);
       return ok(record);
     },
     'reader.updateHighlight': payload => {
       rejectUnknown(payload, UPDATE_HIGHLIGHT_FIELDS, 'updateHighlight');
       validateStyle(payload.style);
       validateMetadata(payload.metadata);
-      const record = hostHighlights.get(payload.highlightId);
+      const record = hostHighlights.get(recordKey(payload.highlightId));
       if (!record) return fail('error.highlight_not_found');
       if (payload.expectedVersion != null && payload.expectedVersion !== record.version) {
         return fail('error.conflict');
@@ -317,18 +366,45 @@ function createHost(options = {}) {
       record.style = payload.style || record.style;
       return ok(record);
     },
-    'reader.getHighlights': payload => ok([...hostHighlights.values()].filter(record =>
+    // Ownership is per instance, exactly as PluginHighlightRegistry keys it:
+    // an instance never sees, updates or clears another instance's records —
+    // and two instances may hold their own copy of the same highlightId.
+    'reader.getHighlights': payload => ok(ownRecords().filter(record =>
       (!payload?.bookId || record.bookId === payload.bookId)
       && (payload?.sectionIndex == null || record.sectionIndex === payload.sectionIndex))),
-    'reader.clearHighlight': ({ highlightId }) => hostHighlights.delete(highlightId)
-      ? ok(true)
-      : fail('error.highlight_not_found'),
-    'reader.clearAllHighlights': () => { hostHighlights.clear(); return ok(true); },
+    'reader.clearHighlight': ({ highlightId }) => {
+      if (!hostHighlights.has(recordKey(highlightId))) {
+        return fail('error.highlight_not_found');
+      }
+      hostHighlights.delete(recordKey(highlightId));
+      return ok(true);
+    },
+    'reader.clearAllHighlights': ({ bookId } = {}) => {
+      for (const [key, record] of hostHighlights) {
+        if (record.ownerInstanceId !== instanceId) continue;
+        if (!bookId || record.bookId === bookId) hostHighlights.delete(key);
+      }
+      return ok(true);
+    },
+    'reader.scrollToSection': () => ok(true),
+    'reader.getCurrentRef': () => ok({
+      currentBookId: 'בראשית', currentBook: 'בראשית', currentRef: 'בראשית פרק א'
+    }),
+    // Only display preferences the plugin mirrors; a blocked key is simply
+    // absent from the map, exactly as the host behaves.
+    'settings.getMany': ({ keys }) => ok(Object.fromEntries(
+      (keys || []).filter(key => key in hostSettings).map(key => [key, hostSettings[key]])
+    )),
     'reader.getHighlightCapabilities': () => ok({
       surface: 'combined', highlights: true, selection: true, contextMenu: ['mainText']
     }),
     'reader.getSelection': () => ok(null),
-    'reader.revealHighlight': () => ok(true),
+    'reader.revealHighlight': ({ highlightId }) =>
+      (hostHighlights.has(recordKey(highlightId))
+        ? ok(true)
+        : fail('error.highlight_not_found')),
+    'reader.openBook': () => ok(true),
+    'reader.openBookAtRef': () => ok(true),
 
     'fs.writeFile': ({ path: filePath, content }) => {
       files.set(filePath, content);
@@ -355,6 +431,10 @@ function createHost(options = {}) {
     'feedback.report': () => ok('sent')
   };
 
+  // One bucket per instance, as in the real host: `PluginBridgeHandler` is
+  // constructed per WebView.
+  const rateLimiter = throttle ? createRateLimiter() : null;
+
   const listeners = new Map();
   const Otzaria = {
     on: (event, handler) => {
@@ -368,6 +448,19 @@ function createHost(options = {}) {
     },
     call: async (method, payload) => {
       calls.push({ method, payload });
+      if (rateLimiter && !rateLimiter.consume()) {
+        return {
+          success: false,
+          data: null,
+          error: {
+            schemaVersion: 1,
+            code: 'error.rate_limited',
+            message: 'Rate limit exceeded',
+            retryable: true,
+            category: 'too_large'
+          }
+        };
+      }
       const handler = overrides[method] || handlers[method];
       if (!handler) return fail('error.unknown_method', method);
       try {
@@ -390,6 +483,8 @@ function createHost(options = {}) {
     }
   };
 
+  // The real background engine polls on a timer; the tests drive it by hand
+  // through `core.pollRevision()`, so the interval stays a no-op.
   const timers = new Set();
   const context = {
     console,
@@ -422,10 +517,15 @@ function createHost(options = {}) {
     contextMenu,
     toolbar,
     files,
+    hostSettings,
+    /** The records this instance owns — what `reader.getHighlights` returns. */
+    ownRecords,
     core: context.MarkerCore,
     domain: context.MarkerDomain,
     i18n: context.MarkerI18n,
     callsTo: method => calls.filter(entry => entry.method === method),
+    /** How many RPCs the host refused outright. 0 means the plugin paced itself. */
+    get refusals() { return rateLimiter ? rateLimiter.refusals : 0; },
     /** Delivers a host event exactly as the dispatcher would. */
     emit: async (event, payload) => {
       for (const handler of listeners.get(event) || []) await handler(payload);
@@ -476,7 +576,96 @@ function multiSectionSelection() {
   });
 }
 
+/**
+ * One Otzaria **window**: the background engine that draws, and the page the
+ * user has open, sharing that window's registries.
+ *
+ * `storage` may be handed in from outside — that is what makes a second window
+ * a second window. Otzaria opens one per process
+ * (`main` → `secondaryWindowMain`), so every window has its own
+ * `PluginHighlightRegistry`, `ContextMenuRegistry` and background engine,
+ * while the plugin's key-value store is one SQLite file they all share.
+ */
+function createWorld(options = {}) {
+  const world = {
+    storage: options.storage || new Map(),
+    hostHighlights: new Map(),
+    contextMenu: new Map(),
+    toolbar: new Map(),
+    files: options.files || new Map()
+  };
+  const shared = { ...options, world };
+  const engine = createHost({ ...shared, instanceId: 'background' });
+  const page = createHost({ ...shared, instanceId: 'foreground', declarativeMenu: false });
+  /**
+   * What the reader actually paints. `getAllHighlights` de-duplicates on
+   * (ownerPluginId, highlightId), so the same mark held by both instances is
+   * drawn **once** — which is the whole reason both of them may draw it.
+   */
+  const drawn = () => new Set([...world.hostHighlights.values()].map(r => r.highlightId));
+
+  return {
+    world,
+    engine,
+    page,
+    drawn,
+    /** Boots both, engine first, exactly as Otzaria would. */
+    async boot(permissions = BACKGROUND_PERMISSIONS) {
+      await engine.emit('plugin.boot', {
+        app: { runMode: 'background', version: '0.9.97' },
+        permissions
+      });
+      await page.emit('plugin.boot', {
+        app: { runMode: 'foreground', version: '0.9.97' },
+        permissions
+      });
+    },
+    /** One turn of the watch each side runs on a timer in production. */
+    async settle() {
+      await page.core.pollRevision();
+      await engine.core.pollRevision();
+    },
+    dispose: () => { engine.dispose(); page.dispose(); }
+  };
+}
+
+const BACKGROUND_PERMISSIONS = Object.freeze([
+  'app.run_on_startup',
+  'app.background_keep_alive',
+  'reader.highlight',
+  'app.startup_contributions',
+  'events.subscribe:reader.selection_changed'
+]);
+
+/**
+ * Two Otzaria windows on one profile.
+ *
+ * Each has its own highlight and context-menu registries — they are separate
+ * processes — and both read and write the same plugin storage. That shared
+ * store is the only thing they have in common, and it is what the revision
+ * token rides on.
+ */
+function createWindows(count = 2, options = {}) {
+  const storage = options.storage || new Map();
+  const files = options.files || new Map();
+  const windows = Array.from({ length: count },
+    () => createWorld({ ...options, storage, files }));
+  return {
+    storage,
+    windows,
+    async boot(permissions = BACKGROUND_PERMISSIONS) {
+      for (const window of windows) await window.boot(permissions);
+    },
+    /** One turn of the watch every instance in every window runs on a timer. */
+    async settle() {
+      for (const window of windows) await window.settle();
+    },
+    dispose: () => { for (const window of windows) window.dispose(); }
+  };
+}
+
 module.exports = {
-  ROOT, createHost, selection, multiSectionSelection, manifest,
+  ROOT, createHost, createWorld, createWindows, BACKGROUND_PERMISSIONS,
+  selection, multiSectionSelection, manifest,
   HostRejection, validateMenuItem, validateToolbarItem, validateSetHighlight
 };

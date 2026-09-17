@@ -1,6 +1,3 @@
-# גופנים — מוזרקים אוטומטית על ידי אוצריא לפני plugin.boot, אין צורך לארוז אותם
-fonts/
-
 # פיתוח, בדיקות ותיעוד — אינם נדרשים בזמן ריצה
 .github/
 docs/
@@ -16,4 +13,7 @@ CONTRIBUTING.md
 AGENTS.md
 
 # מה שכן נארז ואסור להחריג:
-#   index.html, manifest.json, icon/, css/, js/, i18n/
+#   index.html, background.html, manifest.json, icon/, css/, js/, i18n/
+#
+# גופנים אינם נארזים ואינם נשמרים כאן כלל: הם נטענים מאוצריא בזמן ריצה דרך
+# fonts.resolveFamilies. ראו docs/ARCHITECTURE.md § גופנים.

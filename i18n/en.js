@@ -302,7 +302,6 @@
     'בחירה בלחיצה אחת. אוצריא מציגה ריבועי צבע בלבד — השם „מרקר” אינו מופיע לצידם.': 'One click to mark. Otzaria shows only the colour swatches — the name “Marker” is not displayed beside them.',
     'תת-תפריט': 'Submenu',
     'הצבעים ברשימה נפתחת תחת השם „מרקר”, עם אייקון.': 'The colours in a drop-down list under the name “Marker”, with an icon.',
-    'תפריט ההקשר נרשם עם עליית אוצריא, גם בלי שהתוסף נפתח.': 'The context menu is registered when Otzaria starts, even if the plugin was never opened.',
 
     // ── Settings: tags ──────────────────────────────────────────────────────
     'ניהול תגיות': 'Tag management',
@@ -368,7 +367,6 @@
     'השמירה נכשלה': 'Saving failed',
 
     // ── About tab ───────────────────────────────────────────────────────────
-    'אודות התוסף': 'About the plugin',
     'שם': 'Name',
     'מרקר': 'Marker',
     'מפתח': 'Developer',
@@ -377,14 +375,8 @@
     'גרסת אוצריא': 'Otzaria version',
     'מערכת': 'Platform',
     'מצב הרצה': 'Run mode',
-    'הדף מנהל את התוסף': 'The page drives the plugin',
     'דף הבית של התוסף': 'Plugin home page',
     'עמוד התוסף בחנות': 'Plugin page in the store',
-    'קיצור דרך בשולחן העבודה': 'Desktop shortcut',
-    'הוספה לתפריט ההתחל': 'Add to the Start menu',
-    'קיצור הדרך נוצר': 'Shortcut created',
-    'לא ניתן ליצור קיצור דרך': 'The shortcut could not be created',
-    'מרקר — ניהול ההדגשות': 'Marker — manage highlights',
     'הסר סימון': 'Remove mark',
 
     // ── Report form ─────────────────────────────────────────────────────────
@@ -440,6 +432,20 @@
 
     'נקה סימון': 'Clear highlight',
     'אין סימון בקטע שנבחר': 'No highlight in the selected text',
+    'רשימת הצבעים התעדכנה זה עתה. בחרו צבע שוב מהתפריט.':
+      'The colour list was just refreshed. Please pick a colour from the menu again.',
+    'כל הצבעים כבויים. הדליקו לפחות צבע אחד במסך „ניהול צבעים”.':
+      'Every colour is switched off. Enable at least one in "Manage colours".',
+    'לא ניתן לקרוא כרגע את כל ההדגשות השמורות, ולכן המחיקה לא בוצעה. נסו שוב בעוד רגע.':
+      'Not all of the stored highlights can be read right now, so nothing was deleted. Please try again in a moment.',
+    'ההדגשה שלחצתם עליה אינה של מרקר, ולכן אין לה הערה לערוך.':
+      'The highlight you clicked does not belong to Marker, so it has no note to edit.',
+    'לא ניתן היה לפתוח את מרקר. אפשר לפתוח אותו מלשונית הכלים.':
+      'Marker could not be opened. You can open it from the tools tab.',
+    'הספר נפתח, אך לא ניתן היה לגלול בדיוק לשורה המסומנת.':
+      'The book opened, but it could not scroll exactly to the highlighted line.',
+    'הייבוא נכשל, והשחזור למצב הקודם הצליח רק חלקית ({failed} רשומות). לא ניתן היה לשמור עותק של המצב הקודם.':
+      'The import failed and the rollback only partly succeeded ({failed} records). A copy of the previous state could not be saved.',
     'הסימון הוסר': 'The highlight was removed',
     '{count} סימונים הוסרו': '{count} highlights were removed',
     '{failed} סימונים לא הוסרו': '{failed} highlights could not be removed',
@@ -448,8 +454,71 @@
     'הפוך לצבע ברירת המחדל': 'Make this the default color',
     'הפוך את {name} לברירת המחדל': 'Make {name} the default color',
 
-    // ── Engine notices ──────────────────────────────────────────────────────
-    'ההרשאה „תרומות עלייה” כבויה, ולכן תפריט הלחיצה הימנית נרשם רק כשהתוסף פתוח.': 'The “startup contributions” permission is off, so the right-click menu is only registered while the plugin is open.',
-    'ההרשאה „סימון בקורא” כבויה, ולכן ההדגשות נשמרות אך אינן מצוירות על הטקסט.': 'The “reader highlight” permission is off, so highlights are stored but not drawn over the text.'
+    // ── Engine notices ──────────────────────────────────────────────────────,
+
+    // ── About the plugin ──────────────────────────────────────────────────────
+    'מה התוסף הזה עושה': 'What this plugin does',
+    'מרקר הוא מדגש טקסט לאוצריא. מסמנים קטע בספר, בוחרים צבע מתפריט הלחיצה הימנית — והקטע נשאר מודגש בכל פעם שפותחים את הספר מחדש, בדיוק כמו מרקר על דף נייר.': 'Marker is a text highlighter for Otzaria. Select a passage in a book, pick a colour from the right-click menu, and it stays highlighted every time you open that book again — just like a highlighter pen on paper.',
+    'למי זה מיועד': 'Who it is for',
+    'לכל מי שלומד מתוך אוצריא ורוצה לסמן לעצמו מה חשוב, מה צריך חזרה ומה עדיין פתוח — בלי להעתיק מילה לקובץ חיצוני.': 'Anyone studying in Otzaria who wants to mark what matters, what needs another pass and what is still open — without copying a word into a separate file.',
+    'מה אפשר לעשות עם סימון': 'What you can do with a highlight',
+    'לצרף לו הערה אישית, לתייג אותו, לסמן אותו כמועדף, ולחזור אליו אחר כך מרשימה אחת שמרכזת את כל הסימונים מכל הספרים.': 'Attach a private note, tag it, mark it as a favourite, and come back to it later from a single list that gathers every highlight from every book.',
+    'איך מוצאים סימון ישן': 'How to find an old highlight',
+    'בלשונית „הדגשות” אפשר לחפש בתוך הטקסט המסומן ובהערות, לסנן לפי ספר, צבע או תגית, וללחוץ „פתח” כדי לקפוץ למקום המדויק בספר.': 'On the Highlights tab you can search inside the marked text and the notes, filter by book, colour or tag, and press “Open” to jump to the exact spot in the book.',
+    'לאן הנתונים הולכים': 'Where your data goes',
+    'הכול נשמר אצלכם במחשב, בתוך אוצריא בלבד. לתוסף אין גישה לאינטרנט, הוא אינו שולח מידע לשום מקום, והוא מגבה את עצמו לתיקייה הפרטית שלו כך שהגיבוי של אוצריא כולל גם אותו.': 'Everything stays on your own computer, inside Otzaria. The plugin has no internet access, sends nothing anywhere, and backs itself up into its private folder so Otzaria\'s own backup covers it too.',
+    'מה הוא לא עושה': 'What it does not do',
+    'הוא אינו משנה את נוסח הספרים ואינו כותב בתוכם. הסימון הוא שכבה נפרדת שמצוירת מעל הטקסט, ומחיקת סימון אינה נוגעת בספר עצמו.': 'It never changes the text of a book and never writes into one. A highlight is a separate layer drawn over the text, and deleting one does not touch the book itself.',
+    'דף התוסף מצייר את ההדגשות': 'The plugin page is drawing the highlights',
+    'מנוע הרקע מצייר את ההדגשות': 'The background engine is drawing the highlights',
+
+    // ── Links and desktop integration ─────────────────────────────────────────
+    'קישורים באינטרנט': 'Links on the web',
+    'הפעלה וכיבוי': 'Turn on and off',
+    'סמל מרקר בסרגל הכלים של הספר': 'Marker icon on the book\'s toolbar',
+    'מוסיף סמל מרקר לשורת הכלים שמעל הספר. לחיצה עליו מסתירה זמנית את כל ההדגשות בספר שפתוח כרגע, ולחיצה נוספת מחזירה אותן — הסימונים עצמם נשמרים ואינם נמחקים.': 'Adds a Marker icon to the toolbar above the book. Pressing it temporarily hides every highlight in the book you have open, and pressing it again brings them back — the highlights themselves are kept and never deleted.',
+    'קיצור דרך למרקר בשולחן העבודה': 'A Marker shortcut on the desktop',
+    'יוצר קובץ קיצור דרך שפותח את אוצריא ישר בדף של מרקר. אוצריא תשאל אתכם לפני היצירה. להסרה — מוחקים את קובץ הקיצור כמו כל קובץ אחר; לתוסף אין אפשרות למחוק קבצים אצלכם במחשב.': 'Creates a shortcut file that opens Otzaria straight onto Marker\'s page. Otzaria will ask you before creating it. To remove it, delete the shortcut file like any other file — the plugin cannot delete files on your computer.',
+    'מרקר בתפריט „התחל” של ווינדוס': 'Marker in the Windows Start menu',
+    'מוסיף את מרקר לרשימת התוכניות בתפריט ההתחל, כדי לפתוח אותו בלי לחפש. גם כאן אוצריא תשאל לפני היצירה, וההסרה נעשית מתוך תפריט ההתחל עצמו.': 'Adds Marker to the program list in the Start menu, so you can open it without searching. Otzaria asks before creating it here too, and you remove it from the Start menu itself.',
+    'צור קיצור': 'Create shortcut',
+    'הוסף לתפריט ההתחל': 'Add to Start menu',
+    'הקיצור נוצר בשולחן העבודה': 'The shortcut was created on your desktop',
+    'מרקר נוסף לתפריט ההתחל': 'Marker was added to the Start menu',
+    'לא הצלחנו ליצור את הקיצור. ייתכן שההרשאה כבויה, או שבמערכת הזאת אין שולחן עבודה.': 'The shortcut could not be created. The permission may be off, or this system may have no desktop.',
+    'סמל מרקר יופיע בסרגל הכלים של הספר': 'The Marker icon will appear on the book\'s toolbar',
+    'סמל מרקר לא יופיע יותר בסרגל הכלים': 'The Marker icon will no longer appear on the toolbar',
+    'שינוי הסמל בסרגל הכלים נכשל': 'Changing the toolbar icon failed',
+
+    // ── Hiding the highlights in one book ─────────────────────────────────────
+    'מרקר — הסתרת ההדגשות בספר הזה': 'Marker — hide the highlights in this book',
+    'מרקר — הצגת ההדגשות בספר הזה': 'Marker — show the highlights in this book',
+    'ההדגשות בספר הזה מוסתרות. לחיצה נוספת תחזיר אותן.': 'The highlights in this book are hidden. Press again to bring them back.',
+    'ההדגשות בספר הזה מוצגות שוב': 'The highlights in this book are showing again',
+    'לא זוהה ספר פתוח. פִּתחו ספר ולחצו שוב.': 'No open book was found. Open a book and try again.',
+    'הסתרה או הצגה של ההדגשות בספר שפתוח': 'Hide or show the highlights in the open book',
+
+    // ── The Divine Name and the eraser ────────────────────────────────────────
+    'שם ה׳ בטקסט המסומן': 'The Divine Name in highlighted text',
+    'כמו שמוגדר באוצריא': 'Same as Otzaria is set to',
+    'תמיד להחליף': 'Always substitute',
+    'להשאיר ככתבו': 'Leave as written',
+    'נוגע רק לאופן שבו התוסף מציג, מדפיס ומייצא את הטקסט שסימנתם — ברשימה, בכרטיסים ובקבצים שיוצאים ממנה. הספר עצמו אינו משתנה. „כמו שמוגדר באוצריא” מציג בדיוק את מה שרואים בספר.': 'This affects only how the plugin shows, prints and exports the text you marked — in the list, on the cards and in the files it produces. The book itself is unchanged. “Same as Otzaria is set to” shows exactly what you see in the book.',
+    'תפריט הלחיצה הימנית נרשם עם עליית אוצריא, גם בלי שהתוסף נפתח.': 'The right-click menu is registered when Otzaria starts, even if the plugin was never opened.',
+
+    // ── Engine notices ────────────────────────────────────────────────────────,
+
+    // ── Permission notices ────────────────────────────────────────────────────
+    'כרגע אי אפשר לצבוע טקסט בספרים: למרקר חסרה ההרשאה „הדגשות בטקסט”. הסימונים שכבר שמורים לא נמחקו והם עדיין ברשימה כאן, אבל הם לא יופיעו על הדף. להפעלה: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.': 'Colouring text in books is not possible right now: Marker is missing the “Highlights in text” permission. Highlights you already saved were not deleted and are still listed here, but they will not appear on the page. To enable it: Settings → Tools → Installed Plugins → Marker → Manage Permissions.',
+    'תפריט הצבעים לא יופיע בלחיצה ימנית בספר, כי ההרשאה „הוספת רכיבים לתוכנה” כבויה. להפעלה: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.': 'The colour menu will not appear when you right-click in a book, because the “Add components to the app” permission is off. To enable it: Settings → Tools → Installed Plugins → Marker → Manage Permissions.',
+    'ההדגשות יופיעו בספרים רק כל עוד הכרטיסייה הזאת פתוחה, ולחיצה על צבע בתפריט הימני תקפיץ אתכם לכאן במקום לסמן בספר. הסיבה: ההרשאה „טעינה אוטומטית ברקע” כבויה. להפעלה: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.': 'Highlights will show in books only while this tab stays open, and clicking a colour in the right-click menu will jump you back here instead of marking the book. The reason: the “Load automatically in the background” permission is off. To enable it: Settings → Tools → Installed Plugins → Marker → Manage Permissions.',
+    'ההדגשות עלולות להיעלם מהספר אחרי כמה דקות של חוסר פעילות, ולחזור רק כשתדפדפו. הסיבה: ההרשאה „מניעת כיבוי מנוע הרקע” כבויה. להפעלה: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.': 'Highlights may disappear from the book after a few idle minutes and come back only once you navigate. The reason: the “Keep the background engine alive” permission is off. To enable it: Settings → Tools → Installed Plugins → Marker → Manage Permissions.',
+    'הלחצנים האלה פותחים דף אינטרנט בדפדפן של המחשב, מחוץ לאוצריא. הם מוצגים רק מפני שאישרתם למרקר את ההרשאה „פתיחת קישורים בדפדפן”; אם תכבו אותה, האזור הזה ייעלם.': 'These buttons open a web page in your computer\'s browser, outside Otzaria. They are shown only because you granted Marker the “Open links in the browser” permission; turn it off and this section disappears.',
+    'כאן נמצאים הדברים שמרקר מוסיף מחוץ לדף הזה. כל אחד מהם מופיע רק אם אישרתם את ההרשאה המתאימה ב: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.': 'This is everything Marker adds outside this page. Each one appears only if you granted the matching permission under Settings → Tools → Installed Plugins → Marker → Manage Permissions.',
+    'כרגע לא אישרתם אף אחת מההרשאות האלה, ולכן אין כאן מה להפעיל. אפשר לשנות זאת ב: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.': 'You have not granted any of these permissions yet, so there is nothing here to turn on. You can change that under Settings → Tools → Installed Plugins → Marker → Manage Permissions.',
+
+    // ── The eraser, and a silent save that failed ─────────────────────────────
+    'המחק („נקה סימון”) מצטרף לשורת הצבעים רק כשהקטע שסימנתם כבר צבוע, כדי שהתפריט יישאר קצר. אפשר גם ללחוץ לחיצה ימנית ישירות על הדגשה בספר, בלי לסמן מחדש.': 'The eraser (“Clear highlight”) joins the colour row only when the passage you selected is already coloured, which keeps the menu short. You can also right-click a highlight in the book directly, without selecting it again.',
+    'השמירה נכשלה: {reason}': 'The save failed: {reason}'
   };
 })(globalThis);

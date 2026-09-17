@@ -13,7 +13,8 @@ const MANIFEST = readJson('manifest.json');
 const TARGET_VERSION = '0.9.97';
 const SOURCES = [
   'js/marker-domain.js', 'js/marker-i18n.js', 'js/marker-runtime.js',
-  'js/marker-richtext.js', 'js/marker-core.js', 'js/marker-ui.js'
+  'js/marker-richtext.js', 'js/marker-core.js', 'js/marker-ui.js',
+  'js/marker-background.js'
 ];
 
 /**
@@ -29,6 +30,7 @@ const API = {
   'app.openUrl': { since: '0.9.95', permission: 'app.open_url' },
   'feedback.report': { since: '0.9.97', permission: null },
   'feedback.hasReporterEmail': { since: '0.9.97', permission: null },
+  'fonts.resolveFamilies': { since: '0.9.97', permission: null },
   'fs.abortBinaryWrite': { since: '0.9.97', permission: 'fs.user_files.write' },
   'fs.beginBinaryWrite': { since: '0.9.97', permission: 'fs.user_files.write' },
   'fs.commitUserFileWrite': { since: '0.9.97', permission: 'fs.user_files.write' },
@@ -52,10 +54,12 @@ const API = {
   'reader.openBookAtRef': { since: '0.9.89', permission: 'reader.open' },
   'reader.removeContextMenuItem': { since: '0.9.89', permission: 'reader.context_menu' },
   'reader.revealHighlight': { since: '0.9.96', permission: 'reader.highlight' },
+  'reader.scrollToSection': { since: '0.9.97', permission: 'reader.open' },
   'reader.setHighlight': { since: '0.9.89', permission: 'reader.highlight' },
   'reader.updateContextMenuItem': { since: '0.9.95', permission: 'reader.context_menu' },
   'reader.updateHighlight': { since: '0.9.95', permission: 'reader.highlight' },
   'reader.updateToolbarItem': { since: '0.9.97', permission: 'reader.toolbar' },
+  'settings.getMany': { since: '0.9.89', permission: 'settings.read' },
   'shortcut.create': { since: '0.9.94', permission: 'ui.create_shortcut' },
   'storage.get': { since: '0.9.89', permission: 'plugin.storage.read' },
   'storage.list': { since: '0.9.89', permission: 'plugin.storage.read' },
@@ -173,7 +177,13 @@ test('the manifest declares no permission the code never uses', () => {
     .map(method => API[method]?.permission)
     .filter(Boolean));
   // Permissions that back a manifest contribution rather than an RPC call.
-  for (const permission of ['app.startup_contributions', 'app.shortcuts']) {
+  for (const permission of [
+    'app.startup_contributions', 'app.shortcuts',
+    // `contributes.background.entrypoint` plus `startup.keepAlive`: no call
+    // asks for them, and without both the marks vanish from the reader a few
+    // minutes after the plugin tab is closed.
+    'app.run_on_startup', 'app.background_keep_alive'
+  ]) {
     used.add(permission);
   }
   for (const event of subscribedEvents()) {
@@ -267,11 +277,21 @@ test('the declarative contributions pass the host parser', () => {
   for (const item of MANIFEST.contributes.startup.toolbarItems) validateToolbarItem(item);
 });
 
-test('the declarative toolbar item is valid and opens the plugin page', () => {
+test('the declarative toolbar item acts in place instead of opening the plugin', () => {
   const item = MANIFEST.contributes.startup.toolbarItems[0];
   assert.match(item.icon, /_24_(regular|filled)$/);
   assert.deepEqual(item.contexts, ['reader-text'], 'PDF has no highlight support');
-  assert.equal(item.openPlugin, true);
+  // With `openPlugin` the single click would throw the reader into the plugin
+  // tab; the engine handles it silently and hides the marks in this book.
+  assert.equal(item.openPlugin, undefined);
+  // The user can take the button off the toolbar without uninstalling
+  // anything, and the host honours that with no plugin code running.
+  assert.deepEqual(item.when, {
+    storage: { key: 'marker_toolbar_button', notEquals: false }
+  });
+  const domain = read('js/marker-domain.js');
+  assert.match(domain, /const TOOLBAR_FLAG_KEY = 'marker_toolbar_button'/,
+    'the flag the manifest gates on must be the one the plugin writes');
 });
 
 test('the highlight metadata source is one the host accepts', () => {
@@ -299,20 +319,88 @@ test('every declared shortcut has a target and a canonical key', () => {
   assert.equal(new Set(shortcuts.map(shortcut => shortcut.id)).size, shortcuts.length);
 });
 
-test('the plugin runs no background instance, by design', () => {
-  // The host owns highlights per *instance* and erases them when that
-  // instance is torn down (PluginBridgeAdapter.dispose →
-  // PluginHighlightRegistry.removeInstance). A lazily-woken background
-  // instance is disposed a few minutes after it goes idle, so every mark it
-  // drew would vanish with it — and the page cannot clear or update records
-  // it does not own. One instance is the only model that stays consistent.
+test('the background engine is declared, kept alive, and woken by the reader', () => {
+  // The host owns highlights per *instance* and erases them when that instance
+  // is torn down (PluginBridgeAdapter.dispose →
+  // PluginHighlightRegistry.removeInstance). The only instance that outlives a
+  // reading session is the background one, so it has to exist, it has to be
+  // exempt from the idle shutdown that would take its marks with it, and
+  // something has to wake it.
   const startup = MANIFEST.contributes.startup;
-  assert.equal(MANIFEST.permissions.includes('app.run_on_startup'), false);
-  assert.equal(MANIFEST.permissions.includes('app.background_keep_alive'), false);
-  assert.equal(startup.activationEvents, undefined);
-  assert.equal(startup.keepAlive, undefined);
-  assert.equal(MANIFEST.contributes.background, undefined);
-  assert.equal(fs.existsSync(path.join(ROOT, 'background.html')), false);
+  assert.equal(MANIFEST.permissions.includes('app.run_on_startup'), true);
+  assert.equal(MANIFEST.permissions.includes('app.background_keep_alive'), true);
+  assert.equal(startup.keepAlive, true);
+  assert.ok(startup.activationEvents.length > 0,
+    'something has to wake the engine, or it never runs at all');
+  assert.equal(MANIFEST.contributes.background.entrypoint, 'background.html');
+  assert.equal(fs.existsSync(path.join(ROOT, 'background.html')), true);
+});
+
+test('`app.startup` is deliberately NOT an activation event', () => {
+  // Do not put it back. It wedges the plugin permanently, and the failure is
+  // total and silent: no marking, no erasing, no toolbar, no shortcut.
+  //
+  // `PluginLazyActivationService.syncPlugin` arms a one-shot 8-second timer for
+  // `app.startup` that calls `_activate` **without checking whether an engine
+  // is already running**. `_activate` sets `_activating[pluginId]` and calls
+  // the activator; `PluginBackgroundHost._activateOnDemand` then returns early
+  // — normally, building nothing — because `_activeBackgroundPlugins` already
+  // holds the plugin. No widget means no `onLoadStop`, which means neither
+  // `onBackgroundInstanceReady` nor `onBackgroundInstanceFailed` ever runs, so
+  // `_activating` is never cleared and `isBootPending` stays true forever.
+  //
+  // `dispatchEventToPlugin` consults `queueIfBootPending` *before* it looks for
+  // a controller, so from that moment every targeted event — colour click,
+  // toolbar click, shortcut — is parked in a queue nothing will ever drain,
+  // even when a perfectly healthy plugin tab is open. Broadcasts keep flowing,
+  // which is what made it look like the plugin was alive but deaf.
+  //
+  // Whether the trap springs depends only on whether the engine happened to be
+  // up at the eight-second mark, which is why it read as "it works for a few
+  // seconds and then stops".
+  //
+  // Nothing is lost by leaving it out: the remaining triggers are reader
+  // events, and they fire as soon as a book is on screen — which is exactly
+  // when the engine is needed. Every other route into `_activate` is guarded by
+  // "there is no usable instance", so only this timer could fire into a
+  // healthy engine.
+  const events = MANIFEST.contributes.startup.activationEvents
+    .map(entry => (typeof entry === 'string' ? entry : entry.topic));
+  assert.equal(events.includes('app.startup'), false);
+});
+
+test('every activation event carries its own subscribe permission', () => {
+  // `app.startup` is the one trigger that is not a topic; every other entry is
+  // an ordinary event and needs the same permission a live subscription does.
+  for (const entry of MANIFEST.contributes.startup.activationEvents) {
+    const topic = typeof entry === 'string' ? entry : entry.topic;
+    if (topic === 'app.startup') continue;
+    assert.ok(MANIFEST.permissions.includes(`events.subscribe:${topic}`),
+      `${topic} is an activation event with no subscribe permission`);
+  }
+});
+
+test('the background page is headless and shares the engine with the plugin page', () => {
+  const background = read('background.html');
+  const scripts = [...background.matchAll(/<script src="([^"]+)"><\/script>/g)]
+    .map(match => match[1]);
+  assert.deepEqual(scripts, [
+    'js/marker-domain.js',
+    'js/marker-i18n.js',
+    'i18n/en.js',
+    'js/marker-runtime.js',
+    'js/marker-core.js',
+    'js/marker-background.js'
+  ]);
+  // The page modules are the plugin tab's. Loading them here would cost a
+  // DOM, a stylesheet and an editor in a WebView with nothing to show.
+  assert.equal(background.includes('marker-ui.js'), false);
+  assert.equal(background.includes('marker-richtext.js'), false);
+  assert.equal(background.includes('style.css'), false);
+  assert.equal(/<body>[\s\S]*<(?!script|\/)/.test(background), false,
+    'the background page must render nothing');
+  // The engine is started once per page, by that page's own entry script.
+  assert.match(read('js/marker-background.js'), /MarkerCore\.start\(\)/);
 });
 
 test('the icons named in the manifest use the 24px naming rule', () => {
@@ -334,9 +422,11 @@ test('the entrypoint exists and is not excluded from the package', () => {
 
 test('every runtime asset the pages load is packaged', () => {
   const ignored = read('.otzignore').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-  const referenced = new Set();
-  for (const match of read('index.html').matchAll(/(?:src|href)="([^"]+)"/g)) {
-    referenced.add(match[1]);
+  const referenced = new Set([MANIFEST.contributes.background.entrypoint]);
+  for (const page of ['index.html', 'background.html']) {
+    for (const match of read(page).matchAll(/(?:src|href)="([^"]+)"/g)) {
+      referenced.add(match[1]);
+    }
   }
   for (const asset of referenced) {
     assert.equal(fs.existsSync(path.join(ROOT, asset)), true, `${asset} is referenced but missing`);
@@ -375,14 +465,28 @@ test('the engine never touches the DOM, so the background page stays headless', 
 });
 
 test('no CDN, remote font or inline event handler slipped in', () => {
-  const html = read('index.html');
-  // Only loading matters. A URL inside a placeholder is sample text, not a
-  // resource the page fetches.
-  const loaded = [...html.matchAll(/\b(?:src|href)="([^"]+)"/g)].map(match => match[1]);
-  const remote = loaded.filter(value => /^[a-z]+:\/\//i.test(value));
-  assert.deepEqual(remote, [], 'pages must not load remote resources');
-  assert.equal(/\son(click|change|input|submit|load)=/i.test(html), false, 'no inline event handlers');
+  for (const page of ['index.html', 'background.html']) {
+    const html = read(page);
+    // Only loading matters. A URL inside a placeholder is sample text, not a
+    // resource the page fetches.
+    const loaded = [...html.matchAll(/\b(?:src|href)="([^"]+)"/g)].map(match => match[1]);
+    const remote = loaded.filter(value => /^[a-z]+:\/\//i.test(value));
+    assert.deepEqual(remote, [], `${page} must not load remote resources`);
+    assert.equal(/\son(click|change|input|submit|load)=/i.test(html), false,
+      `${page} has an inline event handler`);
+  }
   assert.equal(/@import|url\(\s*['"]?https?:/.test(read('css/style.css')), false);
+});
+
+test('no font file is packaged — the reading fonts come from Otzaria', () => {
+  // `src: local()` resolves only fonts installed on the machine inside a
+  // plugin WebView, so the plugin used to carry its own copy of nine families
+  // Otzaria already ships. `fonts.resolveFamilies` hands over the bytes.
+  const fontFiles = fs.existsSync(path.join(ROOT, 'fonts'));
+  assert.equal(fontFiles, false, 'the fonts/ directory is gone for good');
+  assert.equal(/@font-face/.test(read('css/style.css')), false,
+    'a @font-face in the stylesheet would need a file to point at');
+  assert.match(read('js/marker-ui.js'), /fonts\.resolveFamilies/);
 });
 
 /**
@@ -394,7 +498,9 @@ const UNTRUSTED_READS = [
   'item.text', 'item.note', 'item.book', 'item.bookId', 'item.ref', 'item.key',
   'item.highlightId', 'item.colorId', 'color.label', 'color.hex', 'color.id',
   'option.value', 'option.textContent', 'entry.name', 'entry.path',
-  'title', 'short', 'note', 'label', 'tag', 'heading', 'when'
+  'title', 'short', 'note', 'label', 'tag', 'heading', 'when',
+  // The book text after the Divine-Name policy — still book text.
+  'text'
 ];
 
 const MARKUP_LINE = /<[a-zA-Z/]/;
@@ -500,7 +606,7 @@ test('the exported HTML escapes its content too', () => {
   const start = ui.indexOf("if (template.format === 'html')");
   const htmlBranch = ui.slice(start, ui.indexOf("if (template.format === 'text')", start));
   assert.ok(start > 0 && htmlBranch.length > 0, 'the HTML export branch moved');
-  assert.match(htmlBranch, /escapeHtml\(item\.text\)/);
+  assert.match(htmlBranch, /escapeHtml\(text\)/);
   assert.match(htmlBranch, /escapeHtml\(note\)/);
   assert.match(htmlBranch, /escapeHtml\(heading\)/);
   assert.match(htmlBranch, /tags\.map\(escapeHtml\)/);

@@ -172,8 +172,6 @@
 
     <section id="colorsTab" class="tab-panel" data-panel="colors">
       <form id="colorsForm" class="settings-form">
-        <div id="colorsAutoSaveStatus" class="autosave-status" role="status" hidden></div>
-
         <section class="card accent-colors">
           <div class="card-title-row">
             <h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 0 17h1.2a1.8 1.8 0 0 0 0-3.6h-.7a1.5 1.5 0 0 1 0-3h2.2A5.8 5.8 0 0 0 20.5 8 8.5 8.5 0 0 0 12 3.5Z"/><circle cx="8" cy="9" r="1"/><circle cx="11.5" cy="6.8" r="1"/><circle cx="15.5" cy="8" r="1"/></svg><span data-i18n>צבעים</span></h2>
@@ -250,6 +248,14 @@
             <label class="range-setting"><span data-i18n>מרווח בין השורות</span> <output id="lineHeightValue" for="lineHeight"></output>
               <input id="lineHeight" name="lineHeight" type="range" min="1.2" max="2" step="0.1" />
             </label>
+            <label><span data-i18n>שם ה׳ בטקסט המסומן</span>
+              <select id="holyNames" name="holyNames">
+                <option value="auto" data-i18n>כמו שמוגדר באוצריא</option>
+                <option value="always" data-i18n>תמיד להחליף</option>
+                <option value="never" data-i18n>להשאיר ככתבו</option>
+              </select>
+              <span class="field-hint" data-i18n>נוגע רק לאופן שבו התוסף מציג, מדפיס ומייצא את הטקסט שסימנתם — ברשימה, בכרטיסים ובקבצים שיוצאים ממנה. הספר עצמו אינו משתנה. „כמו שמוגדר באוצריא” מציג בדיוק את מה שרואים בספר.</span>
+            </label>
           </div>
         </section>
 
@@ -268,7 +274,8 @@
               <span class="radio-hint" data-i18n>הצבעים ברשימה נפתחת תחת השם „מרקר”, עם אייקון.</span>
             </label>
           </fieldset>
-          <p class="card-note" data-i18n>תפריט ההקשר נרשם עם עליית אוצריא, גם בלי שהתוסף נפתח.</p>
+          <p class="card-note" data-i18n>המחק („נקה סימון”) מצטרף לשורת הצבעים רק כשהקטע שסימנתם כבר צבוע, כדי שהתפריט יישאר קצר. אפשר גם ללחוץ לחיצה ימנית ישירות על הדגשה בספר, בלי לסמן מחדש.</p>
+          <p class="card-note" data-i18n>תפריט הלחיצה הימנית נרשם עם עליית אוצריא, גם בלי שהתוסף נפתח.</p>
         </section>
 
         <section class="card centered-card accent-tags">
@@ -331,7 +338,15 @@
 
     <section id="aboutTab" class="tab-panel" data-panel="about">
       <section class="card accent-about">
-        <div class="card-title-row"><h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.9v.2"/></svg><span data-i18n>אודות התוסף</span></h2></div>
+        <div class="card-title-row"><h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.9v.2"/></svg><span data-i18n>מה התוסף הזה עושה</span></h2></div>
+        <p class="about-lede" data-i18n>מרקר הוא מדגש טקסט לאוצריא. מסמנים קטע בספר, בוחרים צבע מתפריט הלחיצה הימנית — והקטע נשאר מודגש בכל פעם שפותחים את הספר מחדש, בדיוק כמו מרקר על דף נייר.</p>
+        <ul class="about-bullets">
+          <li><strong data-i18n>למי זה מיועד</strong><span data-i18n>לכל מי שלומד מתוך אוצריא ורוצה לסמן לעצמו מה חשוב, מה צריך חזרה ומה עדיין פתוח — בלי להעתיק מילה לקובץ חיצוני.</span></li>
+          <li><strong data-i18n>מה אפשר לעשות עם סימון</strong><span data-i18n>לצרף לו הערה אישית, לתייג אותו, לסמן אותו כמועדף, ולחזור אליו אחר כך מרשימה אחת שמרכזת את כל הסימונים מכל הספרים.</span></li>
+          <li><strong data-i18n>איך מוצאים סימון ישן</strong><span data-i18n>בלשונית „הדגשות” אפשר לחפש בתוך הטקסט המסומן ובהערות, לסנן לפי ספר, צבע או תגית, וללחוץ „פתח” כדי לקפוץ למקום המדויק בספר.</span></li>
+          <li><strong data-i18n>לאן הנתונים הולכים</strong><span data-i18n>הכול נשמר אצלכם במחשב, בתוך אוצריא בלבד. לתוסף אין גישה לאינטרנט, הוא אינו שולח מידע לשום מקום, והוא מגבה את עצמו לתיקייה הפרטית שלו כך שהגיבוי של אוצריא כולל גם אותו.</span></li>
+          <li><strong data-i18n>מה הוא לא עושה</strong><span data-i18n>הוא אינו משנה את נוסח הספרים ואינו כותב בתוכם. הסימון הוא שכבה נפרדת שמצוירת מעל הטקסט, ומחיקת סימון אינה נוגעת בספר עצמו.</span></li>
+        </ul>
         <dl class="about-grid">
           <dt data-i18n>שם</dt><dd data-i18n>מרקר</dd>
           <dt data-i18n>מפתח</dt><dd data-i18n>מיכאלוש</dd>
@@ -340,12 +355,42 @@
           <dt data-i18n>מערכת</dt><dd id="aboutPlatform"></dd>
           <dt data-i18n>מצב הרצה</dt><dd id="aboutRunMode"></dd>
         </dl>
+      </section>
+
+      <section id="linksCard" class="card accent-links" hidden>
+        <div class="card-title-row"><h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a4 4 0 0 0 5.7.4l2.6-2.6a4 4 0 0 0-5.7-5.7l-1.4 1.4"/><path d="M14 11a4 4 0 0 0-5.7-.4l-2.6 2.6a4 4 0 0 0 5.7 5.7l1.4-1.4"/></svg><span data-i18n>קישורים באינטרנט</span></h2></div>
+        <p class="card-note" data-i18n>הלחצנים האלה פותחים דף אינטרנט בדפדפן של המחשב, מחוץ לאוצריא. הם מוצגים רק מפני שאישרתם למרקר את ההרשאה „פתיחת קישורים בדפדפן”; אם תכבו אותה, האזור הזה ייעלם.</p>
         <div class="about-actions">
           <button id="openHomepageBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 3 2.5 15 0 18M12 3c-2.5 3-2.5 15 0 18"/></svg><span data-i18n>דף הבית של התוסף</span></button>
           <button id="openStoreBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16l-1.2 11.2a1 1 0 0 1-1 .8H6.2a1 1 0 0 1-1-.8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg><span data-i18n>עמוד התוסף בחנות</span></button>
-          <button id="createShortcutBtn" class="secondary-btn" type="button" hidden><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h6M5 5v6M5 5l7 7"/><path d="M14 14h5v5"/></svg><span data-i18n>קיצור דרך בשולחן העבודה</span></button>
-          <button id="createStartMenuShortcutBtn" class="secondary-btn" type="button" hidden><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span data-i18n>הוספה לתפריט ההתחל</span></button>
         </div>
+      </section>
+
+      <section id="integrationCard" class="card accent-integration" hidden>
+        <div class="card-title-row"><h2><svg class="section-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4v5a3 3 0 0 0 6 0V4"/><path d="M6 9h12v4a6 6 0 0 1-12 0z"/><path d="M12 19v2"/></svg><span data-i18n>הפעלה וכיבוי</span></h2></div>
+        <p class="card-note" data-i18n>כאן נמצאים הדברים שמרקר מוסיף מחוץ לדף הזה. כל אחד מהם מופיע רק אם אישרתם את ההרשאה המתאימה ב: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.</p>
+        <div id="toolbarButtonRow" class="switch-row" hidden>
+          <label class="switch-label" for="toolbarButtonToggle">
+            <span data-i18n>סמל מרקר בסרגל הכלים של הספר</span>
+            <small data-i18n>מוסיף סמל מרקר לשורת הכלים שמעל הספר. לחיצה עליו מסתירה זמנית את כל ההדגשות בספר שפתוח כרגע, ולחיצה נוספת מחזירה אותן — הסימונים עצמם נשמרים ואינם נמחקים.</small>
+          </label>
+          <input id="toolbarButtonToggle" class="switch-input" type="checkbox" role="switch" />
+        </div>
+        <div id="shortcutRow" class="switch-row" hidden>
+          <div class="switch-label">
+            <span data-i18n>קיצור דרך למרקר בשולחן העבודה</span>
+            <small data-i18n>יוצר קובץ קיצור דרך שפותח את אוצריא ישר בדף של מרקר. אוצריא תשאל אתכם לפני היצירה. להסרה — מוחקים את קובץ הקיצור כמו כל קובץ אחר; לתוסף אין אפשרות למחוק קבצים אצלכם במחשב.</small>
+          </div>
+          <button id="createShortcutBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h6M5 5v6M5 5l7 7"/><path d="M14 14h5v5"/></svg><span data-i18n>צור קיצור</span></button>
+        </div>
+        <div id="startMenuRow" class="switch-row" hidden>
+          <div class="switch-label">
+            <span data-i18n>מרקר בתפריט „התחל” של ווינדוס</span>
+            <small data-i18n>מוסיף את מרקר לרשימת התוכניות בתפריט ההתחל, כדי לפתוח אותו בלי לחפש. גם כאן אוצריא תשאל לפני היצירה, וההסרה נעשית מתוך תפריט ההתחל עצמו.</small>
+          </div>
+          <button id="createStartMenuShortcutBtn" class="secondary-btn" type="button"><svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span data-i18n>הוסף לתפריט ההתחל</span></button>
+        </div>
+        <p id="integrationEmpty" class="card-note" hidden data-i18n>כרגע לא אישרתם אף אחת מההרשאות האלה, ולכן אין כאן מה להפעיל. אפשר לשנות זאת ב: הגדרות ← כלים ← תוספים מותקנים ← מרקר ← ניהול הרשאות.</p>
       </section>
 
       <section class="card accent-support">
@@ -380,6 +425,7 @@
         <dl class="about-grid">
           <dt><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>H</kbd></dt><dd data-i18n>סימון הבחירה בצבע ברירת המחדל</dd>
           <dt><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></dt><dd data-i18n>פתיחת רשימת ההדגשות</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>J</kbd></dt><dd data-i18n>הסתרה או הצגה של ההדגשות בספר שפתוח</dd>
           <dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd data-i18n>חיפוש ברשימת ההדגשות</dd>
         </dl>
       </section>
