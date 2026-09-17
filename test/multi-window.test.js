@@ -43,8 +43,9 @@ test('a mark made in one window appears in the other', async t => {
 
 test('each window draws into its own registry, never the other’s', async t => {
   // `PluginHighlightRegistry.instance` is a singleton per isolate, and a
-  // window is a process. A design where only one instance draws would leave
-  // every other window blank.
+  // window is a process, so every window has to draw for itself — a design
+  // where one instance draws for everyone would leave every other window
+  // blank. Within a window that job belongs to the engine alone.
   const app = createWindows(2);
   t.after(app.dispose);
   await app.boot();
@@ -54,8 +55,8 @@ test('each window draws into its own registry, never the other’s', async t => 
   });
   await app.settle();
 
-  assert.equal(first.world.hostHighlights.size, 2, 'engine and page of window one');
-  assert.equal(second.world.hostHighlights.size, 2, 'and of window two');
+  assert.equal(first.world.hostHighlights.size, 1, 'the engine of window one');
+  assert.equal(second.world.hostHighlights.size, 1, 'and the engine of window two');
   for (const record of second.world.hostHighlights.values()) {
     assert.equal(record.highlightId, first.engine.ownRecords()[0].highlightId,
       'the same mark, drawn independently');

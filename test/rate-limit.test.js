@@ -215,11 +215,13 @@ test('a degraded read is retried on the next poll, not left for the session', as
   const host = createHost({ highlights: storedHighlights(3) });
   t.after(host.dispose);
 
-  let failOnce = true;
+  // Two failures, because boot reads the store and then polls it: one refusal
+  // is now caught and made good before boot even finishes.
+  let failures = 2;
   const original = host.context.Otzaria.call;
   host.context.Otzaria.call = async (method, payload) => {
-    if (failOnce && method === 'storage.get' && payload?.key === 'highlight:marker-1') {
-      failOnce = false;
+    if (failures > 0 && method === 'storage.get' && payload?.key === 'highlight:marker-1') {
+      failures -= 1;
       return {
         success: false, data: null,
         error: { schemaVersion: 1, code: 'error.internal', message: 'disk', retryable: false }
@@ -229,7 +231,7 @@ test('a degraded read is retried on the next poll, not left for the session', as
   };
 
   await host.emit('plugin.boot', PAGE_BOOT);
-  assert.equal(host.core.getHighlights().length, 2, 'the failed read cost one record');
+  assert.equal(host.core.getHighlights().length, 2, 'the failed reads cost one record');
 
   assert.equal(await host.core.pollRevision(), true, 'the poll goes back for it');
   assert.equal(host.core.getHighlights().length, 3);

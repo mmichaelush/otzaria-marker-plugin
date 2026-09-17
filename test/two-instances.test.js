@@ -40,7 +40,11 @@ test('a mark is painted once, no matter how many instances hold it', async t => 
 
   assert.equal(world.drawn().size, 1, 'the reader shows one mark');
   assert.equal(world.engine.ownRecords().length, 1);
-  assert.equal(world.page.ownRecords().length, 1, 'and each instance holds its own copy');
+  // The page holds none of its own. It cannot: Otzaria freezes a plugin tab
+  // whenever the user is in the book, and a frozen instance that holds drawn
+  // records can neither update nor release them — which is exactly how hiding
+  // a book came to work on some marks and not others.
+  assert.equal(world.page.ownRecords().length, 0, 'the page leaves the drawing to the engine');
 });
 
 test('a click the engine never saw is still painted by the page', async t => {
@@ -213,3 +217,70 @@ function readerSelectionEvent(overrides = {}) {
     source: 'library'
   }, overrides);
 }
+
+test('hiding a book takes off marks made in an earlier session, not just new ones', async t => {
+  // The report: the toolbar button hid and restored only the marks made in
+  // this session, never the older ones.
+  //
+  // `reader.clearAllHighlights` is scoped to the calling instance. The click
+  // goes to the engine (`preferBackground: true`), so the engine cleared its
+  // own copies — and the page, which had drawn the whole store at boot and was
+  // then frozen by `controller.pause()` the moment the user went back to the
+  // book, kept holding its own. Those stayed on the page.
+  //
+  // A mark made during that same session was held by the engine alone, because
+  // the page had been frozen since before it existed. Hence "only the new ones
+  // hide", and the same for restoring them.
+  const world = createWorld({
+    highlights: [{
+      highlightId: 'marker-old', bookId: 'בראשית', book: 'בראשית', sectionIndex: 2,
+      colorId: 'yellow', color: '#F1E784', text: 'ישן', ref: '', tags: [], note: '',
+      sourceRange: { start: { utf16: 0 }, end: { utf16: 5 } }, timestamp: 1
+    }]
+  });
+  t.after(world.dispose);
+  await world.boot();
+  assert.equal(world.drawn().size, 1, 'the old mark is on the page');
+
+  // A fresh one alongside it, which is the half that always worked.
+  await world.engine.emit('contextMenu.colorClicked', {
+    colorId: 'mark-green', selection: selection()
+  });
+  await world.settle();
+  assert.equal(world.drawn().size, 2);
+
+  // The page is frozen from here on: no polling, no reconcile, no cleanup.
+  await world.engine.emit('reader.toolbar_item_clicked', {
+    itemId: 'marker-toolbar', context: 'reader-text', currentBookId: 'בראשית'
+  });
+
+  assert.equal(world.drawn().size, 0,
+    'both marks go, without the page having to do anything');
+
+  await world.engine.emit('reader.toolbar_item_clicked', {
+    itemId: 'marker-toolbar', context: 'reader-text', currentBookId: 'בראשית'
+  });
+  assert.equal(world.drawn().size, 2, 'and both come back');
+});
+
+test('a page hands its drawn marks back when it wakes up', async t => {
+  // A page still draws what it marks itself — a click reaching it is proof no
+  // engine took it. That copy is the one that would go stale the next time the
+  // tab is frozen, so it goes back at the first moment the page is running and
+  // the engine has caught up.
+  const world = createWorld();
+  t.after(world.dispose);
+  await world.boot();
+
+  await world.page.emit('contextMenu.colorClicked', {
+    colorId: 'mark-green', selection: selection()
+  });
+  assert.equal(world.page.ownRecords().length, 1, 'the page painted its own click');
+
+  await world.settle();
+  assert.equal(world.engine.ownRecords().length, 1, 'the engine has it now');
+
+  await world.page.emit('plugin.resumed', {});
+  assert.equal(world.page.ownRecords().length, 0, 'so the page lets go');
+  assert.equal(world.drawn().size, 1, 'and the mark is still on the page');
+});

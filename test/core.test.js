@@ -258,11 +258,17 @@ test('the background instance is the engine, because it outlives every tab', asy
   assert.equal(host.core.isEngine, true);
 });
 
-test('a page draws the stored marks too, because a copy costs nothing', async t => {
-  // `PluginHighlightRegistry.getAllHighlights` de-duplicates on
-  // (ownerPluginId, highlightId), so the same mark held by the page and by the
-  // engine is painted once. Refusing to draw here bought nothing and cost
-  // everything: when no engine was alive, nothing was painted at all.
+test('a page with an engine behind it lists the stored marks but does not draw them', async t => {
+  // Only an instance that can still act while its marks are on screen may put
+  // them there. Otzaria calls `controller.pause()` on a plugin tab the moment
+  // the user goes back to the book, so a page that had drawn the whole store
+  // sat frozen holding a copy of every mark — visible in the book, impossible
+  // to update, and invisible to the engine, whose `clearAllHighlights` only
+  // reaches its own records.
+  //
+  // That is what made "hide the highlights in this book" look half-broken: the
+  // engine cleared its copies, the page's frozen ones stayed, and only marks
+  // made after the page was frozen — held by the engine alone — actually went.
   const host = createHost({
     highlights: [{
       highlightId: 'marker-kept', bookId: 'בראשית', sectionIndex: 4, colorId: 'green',
@@ -275,9 +281,29 @@ test('a page draws the stored marks too, because a copy costs nothing', async t 
   t.after(host.dispose);
   await host.emit('plugin.boot', VIEWER_BOOT);
 
-  assert.equal(host.core.isEngine, false, 'it is still not the engine');
-  assert.equal(host.core.getHighlights().length, 1);
-  assert.equal(host.hostHighlights.size, 1, 'and it still puts them on the page');
+  assert.equal(host.core.isEngine, false, 'the engine is somebody else');
+  assert.equal(host.core.getHighlights().length, 1, 'it still knows about them');
+  assert.equal(host.hostHighlights.size, 0, 'but the engine is the one drawing');
+});
+
+test('a page with no engine behind it draws everything itself', async t => {
+  // Without `app.run_on_startup` there is no background instance, `ownsEngine`
+  // answers true for the page, and it is the only thing that can draw. This is
+  // the configuration the rule above must never touch.
+  const host = createHost({
+    highlights: [{
+      highlightId: 'marker-kept', bookId: 'בראשית', sectionIndex: 4, colorId: 'green',
+      color: '#8BCF8D', text: 'טקסט', sourceRange: {
+        type: 'text-range-v1', layer: 'source',
+        start: { grapheme: 0, utf16: 0 }, end: { grapheme: 5, utf16: 5 }
+      }
+    }]
+  });
+  t.after(host.dispose);
+  await host.emit('plugin.boot', PAGE_BOOT);
+
+  assert.equal(host.core.isEngine, true);
+  assert.equal(host.hostHighlights.size, 1);
 });
 
 test('a viewer edit reaches storage and bumps the counter for the engine', async t => {

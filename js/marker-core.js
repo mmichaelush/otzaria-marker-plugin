@@ -120,6 +120,11 @@
    * sight of their marks without losing the marks.
    */
   let storeComplete = false;
+  /**
+   * This instance wrote while it was behind another one, so the change marker
+   * now says "you are current" when it is not. Cleared by the next reload.
+   */
+  let staleView = false;
 
   /**
    * How many stored highlights are read at once.
@@ -194,6 +199,20 @@
    * change.
    */
   async function bumpRevision() {
+    // Read before writing, because writing is how an instance declares itself
+    // up to date — and it has no right to declare that if someone else wrote
+    // while it was not looking.
+    //
+    // Two windows marking at the same moment is the case that breaks: window
+    // one writes its token, window two writes its own a moment later without
+    // having polled in between. Window one sees a token it did not write and
+    // reloads, but window two now matches storage exactly and concludes there
+    // is nothing to fetch — so the mark made in window one never reaches it,
+    // and nothing later disturbs the token to correct that.
+    const stored = await callSoft('storage.get', { key: D.REVISION_KEY });
+    if (revision !== null && typeof stored === 'string' && stored !== revision) {
+      staleView = true;
+    }
     revision = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     await callSoft('storage.set', { key: D.REVISION_KEY, value: revision });
   }
@@ -213,18 +232,16 @@
   async function pollRevision() {
     const stored = await callSoft('storage.get', { key: D.REVISION_KEY });
     const next = typeof stored === 'string' ? stored : '';
-    if (next === revision && storeComplete) return false;
-    if (next === revision) {
-      const recovered = await loadHighlights();
-      if (!storeComplete) return false;
-      logger.info(`Store read recovered with ${recovered.length} highlights`);
-      await enqueue(() => reconcileHighlights());
-      return true;
-    }
+    // Three reasons to go back to storage, and only one of them is the token:
+    // somebody else wrote, our own last read came back short (`storeComplete`),
+    // or we wrote while behind and know it (`staleView`).
+    const behind = !storeComplete || staleView;
+    if (next === revision && !behind) return false;
     // A first read only establishes the baseline; there is nothing to reload.
     const isFirstRead = revision === null;
     revision = next;
-    if (isFirstRead) return false;
+    if (isFirstRead && !behind) return false;
+    staleView = false;
     await loadSettings();
     if (applyLanguage()) emit('language', I18n.language);
     await loadMutedBooks();
@@ -525,6 +542,25 @@
       if (!shouldDraw.has(item.highlightId)) continue;
       const hostRecord = hostById.get(item.highlightId);
       if (!hostRecord) {
+        // Only an instance that can still act while its marks are on screen
+        // may put them there. Otzaria calls `controller.pause()` on a plugin
+        // tab the moment the user goes back to the book, freezing its timers —
+        // so a page that had drawn the whole store sat frozen holding a copy
+        // of every mark, visible in the book and impossible to update.
+        //
+        // Hiding a book is what exposed it. `clearAllHighlights` is scoped to
+        // the calling instance, so the engine cleared its own copies and the
+        // page's frozen ones stayed on the page: marks made earlier refused to
+        // hide, while a mark made in that same session — held only by the
+        // engine, because the page had been frozen since before it existed —
+        // hid perfectly. Same for un-hiding, which is why it looked like the
+        // button only worked on "new" marks.
+        //
+        // A click is the exception, and it is handled where it lands
+        // (`applyHighlight`): the host routes clicks with
+        // `preferBackground: true`, so one reaching the page is proof no engine
+        // took it, and the page drawing it is the only way it appears at all.
+        if (!isEngine) continue;
         if (await drawHighlight(item)) restored++;
         continue;
       }
@@ -557,6 +593,24 @@
     }
     if (restored || updated) emit('highlights', highlights);
     return { restored, updated, removed };
+  }
+
+  /**
+   * Hands this instance's drawn marks back, leaving them to the engine.
+   *
+   * A page still ends up holding a record whenever it handled a click itself,
+   * and that record is exactly the kind that goes stale: the next time the
+   * user opens a book the page is frozen, and a copy it can no longer touch
+   * stays on the page. Resuming is the one moment a page is demonstrably
+   * running *and* not the thing the user is looking at in the book, so it is
+   * where the copies go back.
+   *
+   * The engine already has its own copy of everything stored — it reconciles
+   * on the same revision token — so nothing disappears from the book.
+   */
+  async function releaseDrawnRecords() {
+    if (isEngine) return false;
+    return await callSoft('reader.clearAllHighlights', {}) !== null;
   }
 
   /** (Re)draws one stored highlight in the reader, from any instance. */
@@ -1727,6 +1781,27 @@
     await enqueue(() => syncContributions());
   }
 
+  /**
+   * The tab is about to be frozen.
+   *
+   * Best effort by necessity: the host awaits only the synchronous part of the
+   * dispatch and then calls `controller.pause()`, so an RPC started here may
+   * never finish. It is still worth starting — on platforms with no native
+   * pause this is the whole protection, and where there is one the release on
+   * resume covers what this could not.
+   */
+  async function onSuspended() {
+    stopRevisionWatch();
+    await releaseDrawnRecords();
+  }
+
+  /** The tab is live again: pick the watch back up and re-read what changed. */
+  async function onResumed() {
+    await releaseDrawnRecords();
+    startRevisionWatch();
+    await pollRevision();
+  }
+
   // ── Boot ───────────────────────────────────────────────────────────────────
 
   async function boot(payload) {
@@ -1784,6 +1859,11 @@
     R.on('plugin.permissions_changed', onPermissionsChanged, logger);
     R.on('settings.changed', onSettingsChanged, logger);
     R.on('reader.toolbar_item_clicked', onToolbarItemClicked, logger);
+    // Otzaria freezes a plugin tab (`controller.pause()`) the moment the user
+    // returns to the book, and thaws it when they come back. The engine never
+    // gets either event — it is never on screen to begin with.
+    R.on('plugin.suspended', onSuspended, logger);
+    R.on('plugin.resumed', onResumed, logger);
     R.on('plugin.page_opened', data => {
       pendingPageParam = data?.param ?? null;
       emit('page-opened', pendingPageParam);
