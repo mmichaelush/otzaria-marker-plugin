@@ -319,22 +319,54 @@ test('every declared shortcut has a target and a canonical key', () => {
   assert.equal(new Set(shortcuts.map(shortcut => shortcut.id)).size, shortcuts.length);
 });
 
-test('the background engine is declared, kept alive, and woken at startup', () => {
+test('the background engine is declared, kept alive, and woken by the reader', () => {
   // The host owns highlights per *instance* and erases them when that instance
   // is torn down (PluginBridgeAdapter.dispose →
   // PluginHighlightRegistry.removeInstance). The only instance that outlives a
   // reading session is the background one, so it has to exist, it has to be
   // exempt from the idle shutdown that would take its marks with it, and
-  // something has to wake it when Otzaria starts. Drop any one of the three
-  // and the highlights are back to living only while the plugin tab is open.
+  // something has to wake it.
   const startup = MANIFEST.contributes.startup;
   assert.equal(MANIFEST.permissions.includes('app.run_on_startup'), true);
   assert.equal(MANIFEST.permissions.includes('app.background_keep_alive'), true);
   assert.equal(startup.keepAlive, true);
-  assert.ok(startup.activationEvents.includes('app.startup'),
-    'nothing else wakes the engine when Otzaria launches');
+  assert.ok(startup.activationEvents.length > 0,
+    'something has to wake the engine, or it never runs at all');
   assert.equal(MANIFEST.contributes.background.entrypoint, 'background.html');
   assert.equal(fs.existsSync(path.join(ROOT, 'background.html')), true);
+});
+
+test('`app.startup` is deliberately NOT an activation event', () => {
+  // Do not put it back. It wedges the plugin permanently, and the failure is
+  // total and silent: no marking, no erasing, no toolbar, no shortcut.
+  //
+  // `PluginLazyActivationService.syncPlugin` arms a one-shot 8-second timer for
+  // `app.startup` that calls `_activate` **without checking whether an engine
+  // is already running**. `_activate` sets `_activating[pluginId]` and calls
+  // the activator; `PluginBackgroundHost._activateOnDemand` then returns early
+  // — normally, building nothing — because `_activeBackgroundPlugins` already
+  // holds the plugin. No widget means no `onLoadStop`, which means neither
+  // `onBackgroundInstanceReady` nor `onBackgroundInstanceFailed` ever runs, so
+  // `_activating` is never cleared and `isBootPending` stays true forever.
+  //
+  // `dispatchEventToPlugin` consults `queueIfBootPending` *before* it looks for
+  // a controller, so from that moment every targeted event — colour click,
+  // toolbar click, shortcut — is parked in a queue nothing will ever drain,
+  // even when a perfectly healthy plugin tab is open. Broadcasts keep flowing,
+  // which is what made it look like the plugin was alive but deaf.
+  //
+  // Whether the trap springs depends only on whether the engine happened to be
+  // up at the eight-second mark, which is why it read as "it works for a few
+  // seconds and then stops".
+  //
+  // Nothing is lost by leaving it out: the remaining triggers are reader
+  // events, and they fire as soon as a book is on screen — which is exactly
+  // when the engine is needed. Every other route into `_activate` is guarded by
+  // "there is no usable instance", so only this timer could fire into a
+  // healthy engine.
+  const events = MANIFEST.contributes.startup.activationEvents
+    .map(entry => (typeof entry === 'string' ? entry : entry.topic));
+  assert.equal(events.includes('app.startup'), false);
 });
 
 test('every activation event carries its own subscribe permission', () => {

@@ -49,7 +49,6 @@
     "startup": {
       "keepAlive": true,
       "activationEvents": [
-        "app.startup",
         "reader.current_ref_changed",
         "reader.sectionContentChanged"
       ],

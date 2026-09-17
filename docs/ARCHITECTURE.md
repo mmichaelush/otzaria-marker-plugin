@@ -79,8 +79,10 @@ manifest.json          תרומות דקלרטיביות: תפריט הקשר, �
 
 - `contributes.background.entrypoint` — קובץ כניסה נטול UI. בלעדיו אוצריא
   הייתה טוענת את `index.html` כולו ב-WebView נסתר.
-- `contributes.startup.activationEvents: ["app.startup", …]` — מה שמעיר אותו
-  כמה שניות אחרי עליית אוצריא. ההרשאה לבדה אינה מרימה מנוע.
+- `contributes.startup.activationEvents` — מה שמעיר אותו. ההרשאה לבדה אינה
+  מרימה מנוע. הרשימה היא `reader.current_ref_changed` ו-
+  `reader.sectionContentChanged`, ו-**`app.startup` אינו בה בכוונה** (ראו
+  למטה).
 - `startup.keepAlive: true` + ההרשאה `app.background_keep_alive` — בלעדיהן
   אוצריא מכבה מופע רקע עצל אחרי כשלוש דקות, **וההדגשות נמחקות איתו**. זו
   הרשאה רגישה שהמשתמש מאשר בנפרד; `showEngineNotice` בדף מסביר בדיוק מה
@@ -207,7 +209,7 @@ manifest.json          תרומות דקלרטיביות: תפריט הקשר, �
 ממתין ל-`whenBooted()` לפני שהוא נוגע ב-`settings`.
 
 זה מה שמאפשר לתפריט לעבוד מהשנייה הראשונה של אוצריא, בלי שהתוסף עלה. הצבעים
-במניפסט הם ברירות המחדל; כשהמנוע מתעורר (`app.startup`) הוא **מעדכן** את הפריט
+במניפסט הם ברירות המחדל; כשהמנוע מתעורר הוא **מעדכן** את הפריט
 לצבעים ולשפה של המשתמש דרך `reader.updateContextMenuItem`. `reader.addContextMenuItem`
 הוא מסלול נפילה בלבד — למקרה שההרשאה `app.startup_contributions` בוטלה.
 
@@ -415,12 +417,48 @@ sourceRange  version  etag  status  timestamp
 
 ## מחזור החיים של שני המופעים
 
-**מנוע הרקע** עולה כמה שניות אחרי עליית אוצריא (`app.startup`), טוען הגדרות,
-ספרים מושתקים והדגשות, מסנכרן את התרומות ומצייר הכול. אחר כך הוא נשאר חי
-(`keepAlive`) ומטפל בלחיצות, בקיצורים ובאירועי הקורא. אם ההרשאה
-`app.background_keep_alive` כבויה הוא מכובה אחרי כשלוש דקות של חוסר פעילות
-וההדגשות יורדות איתו; `activationEvents` על `reader.current_ref_changed`
-מעירים אותו שוב בניווט הבא, וזו הסיבה שהאירוע הזה נמצא ברשימה.
+**מנוע הרקע** עולה ברגע שהקורא מדווח על מיקום — `reader.current_ref_changed`
+או `reader.sectionContentChanged` — כלומר מהרגע שיש ספר על המסך, וזו בדיוק
+השעה שבה הוא נחוץ. הוא טוען הגדרות, ספרים מושתקים והדגשות, מסנכרן את התרומות
+ומצייר הכול, ואחר כך נשאר חי (`keepAlive`) ומטפל בלחיצות, בקיצורים ובאירועי
+הקורא. אם ההרשאה `app.background_keep_alive` כבויה הוא מכובה אחרי כשלוש דקות
+של חוסר פעילות וההדגשות יורדות איתו; אותם `activationEvents` מעירים אותו שוב
+בניווט הבא.
+
+### למה `app.startup` אינו ברשימה — ואסור להחזיר אותו
+
+הוא נעל את התוסף לחלוטין: לא סימון, לא מחיקה, לא פקד ולא קיצור, בלי שום שגיאה.
+
+`PluginLazyActivationService.syncPlugin` דורך על `app.startup` שעון חד-פעמי של
+שמונה שניות שקורא ל-`_activate` **בלי לבדוק אם כבר רץ מנוע**. `_activate` מסמן
+`_activating[pluginId]` וקורא ל-activator, ו-`PluginBackgroundHost._activateOnDemand`
+יוצא מיד — בהצלחה, בלי לבנות דבר — כי `_activeBackgroundPlugins` כבר מחזיק את
+התוסף. בלי widget אין `onLoadStop`, ולכן לא נקראת `onBackgroundInstanceReady`
+ולא `onBackgroundInstanceFailed`; `_activating` נשאר דלוק לנצח ו-`isBootPending`
+מחזיר `true` לתמיד.
+
+ומכאן זה קטלני: `dispatchEventToPlugin` בודקת `queueIfBootPending` **לפני**
+שהיא מחפשת controller, ולכן מאותו רגע כל אירוע ממוקד — לחיצת צבע, לחיצת פקד,
+קיצור — נכנס לתור שאיש לא ירוקן, גם כשלשונית תוסף בריאה לגמרי פתוחה. שידורים
+ממשיכים לזרום כרגיל, ולכן זה נראה כאילו התוסף חי אבל חירש. ביומן זה נראה כך:
+
+```text
+PluginRuntimeDispatcher: contextMenu.colorClicked → queued (boot pending)
+PluginRuntimeDispatcher: reader.toolbar_item_clicked → queued (boot pending)
+PluginRuntimeDispatcher: Dispatching reader.selection_changed
+```
+
+אם המלכודת נסגרת תלוי רק בשאלה אם המנוע במקרה כבר היה למעלה בשנייה השמינית —
+ולכן זה נקרא "עובד כמה שניות ואז נתקע". סימון אחד בשניות הראשונות מעיר את
+המנוע, ושמונה שניות אחר כך השעון יורה לתוך מנוע בריא והורג את הכול. לשונית
+תוסף פתוחה־אך־מושהית מזרזת את זה: מופע מושהה אינו "שמיש", ולכן
+`reader.current_ref_changed` מעיר את המנוע כבר בשנייה הראשונה.
+
+לא מפסידים מזה כלום. שאר הטריגרים הם אירועי קורא, והם נורים ברגע שיש ספר על
+המסך. כל שאר המסלולים אל `_activate` מגודרים ב"אין מופע שמיש", ולכן רק השעון
+הזה יכול היה לירות לתוך מנוע חי.
+
+`test/compatibility.test.js` אוכף שהוא אינו חוזר.
 
 **הדף** עולה כשהמשתמש פותח את לשונית התוסף, וגם כשאוצריא מעירה אותו בעקבות
 `marker-note`. בכל עלייה הוא טוען את ההדגשות מהאחסון — האחסון הוא המצב

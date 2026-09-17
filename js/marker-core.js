@@ -1444,6 +1444,10 @@
   // `whenBooted()` before it reads the settings.
 
   async function onColorClicked(data) {
+    // Paired with the boot line: between them, a report of "it stopped
+    // responding" is answerable without guessing. The dispatcher prints where
+    // it sent the click; this prints whether anything received it.
+    logger.debug('colour clicked', data?.colorId);
     const colorId = D.colorIdFromItemId(data?.colorId);
     // Settings may still be loading if this click is what woke the instance.
     if (!booted) await whenBooted();
@@ -1744,6 +1748,16 @@
     // below must not leave this instance with no watcher for the other one.
     await pollRevision();
     startRevisionWatch();
+
+    // One deliberately loud line per instance, because the failure this is
+    // here to diagnose is invisible from the plugin's side: when the host's
+    // lazy activation is wedged it parks every click in a queue it will never
+    // drain, and the plugin sees only broadcasts. Knowing whether the engine
+    // reached this point at all is the first question in any such report, and
+    // it lands in the same console as the dispatcher's own tracing.
+    logger.info(`booted v${PLUGIN_VERSION} as`,
+      isEngine ? 'engine' : 'page',
+      `— ${highlights.length} highlights, ${mutedBooks.length} hidden books`);
 
     await enqueue(async () => {
       await removeLegacyMenuItems();

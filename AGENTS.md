@@ -93,8 +93,15 @@
   כל כתיבה שהצד השני צריך לראות חייבת להסתיים ב-`bumpRevision()`; כל קריאה
   מחדש עוברת ב-`pollRevision()`.
 - **שלושה דברים מחזיקים את המנוע בחיים, ואם אחד יורד הבאג הגדול חוזר:**
-  `contributes.background.entrypoint`, `activationEvents` עם `app.startup`,
+  `contributes.background.entrypoint`, `activationEvents` לא ריק,
   ו-`startup.keepAlive: true` יחד עם `app.background_keep_alive`.
+- **אל תוסיפו `app.startup` ל-`activationEvents`.** השעון החד-פעמי שלו קורא
+  ל-`_activate` בלי לבדוק אם כבר רץ מנוע, `_activateOnDemand` יוצא מיד כי
+  `_activeBackgroundPlugins` כבר מחזיק את התוסף, ואז `_activating` לעולם אינו
+  מתנקה. `dispatchEventToPlugin` בודקת `queueIfBootPending` לפני שהיא מחפשת
+  controller, ולכן **כל** לחיצה נכנסת לתור שלא ירוקן — גם כשהלשונית פתוחה
+  ובריאה. הפירוט ב-`docs/ARCHITECTURE.md`, ו-`test/compatibility.test.js`
+  אוכף את זה.
 - **הפקד בסרגל אינו `openPlugin`,** והדגל `marker_toolbar_button` חייב לשבת
   במפתח אחסון משלו — ה-`when` של ה-Host משווה ערך שמור שלם ואינו נכנס לתוך
   `marker_settings`.

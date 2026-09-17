@@ -109,7 +109,7 @@ handler של לחיצה**. קריאה אחרי `await` ארוך מוחזרת ב-
 | `contextMenuItems` | `marker-colors`, `marker-highlight-actions` | עד 2 פריטים עליונים לתוסף; `color-row` בין 1 ל-12 ערכים (התוסף שולח עד 8 צבעים ועוד מחק); עומק קינון עד 2 |
 | `toolbarItems` | `marker-toolbar`, מותנה ב-`when` על `marker_toolbar_button` | עד 2 פקדים; פקד עליון חייב אייקון; עומק `when` עד 5 ועד 20 עלים |
 | `shortcuts` | `ctrl+alt+h`, `ctrl+alt+m`, `ctrl+alt+j` | עד 32; חייב `command` או `contextMenuItemId` |
-| `activationEvents` | `app.startup`, `reader.current_ref_changed`, `reader.sectionContentChanged` | כל נושא דורש גם את הרשאת ה-subscribe שלו |
+| `activationEvents` | `reader.current_ref_changed`, `reader.sectionContentChanged` — **בלי `app.startup`**, ראו [ARCHITECTURE](ARCHITECTURE.md#למה-appstartup-אינו-ברשימה--ואסור-להחזיר-אותו) | כל נושא דורש גם את הרשאת ה-subscribe שלו |
 | `keepAlive` | `true` | דורש את `app.background_keep_alive`, שמוצגת באדום ומאושרת בנפרד |
 
 הצבעים במניפסט הם ברירות המחדל. המנוע מעדכן אותם לצבעי המשתמש ולשפתו; ראו
